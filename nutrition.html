@@ -1,0 +1,964 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>Nutrition Log</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Guard so a failed CDN load (offline) doesn't throw — the app itself still works unstyled.
+    window.tailwind = window.tailwind || {};
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0a0a0a',
+            panel: '#141414',
+            panel2: '#1c1c1c',
+            edge: '#2a2a2a',
+            ember: '#ef4444',
+            emberDim: '#7f1d1d',
+          },
+          fontFamily: {
+            sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html { -webkit-text-size-adjust: 100%; color-scheme: dark; }
+    body { -webkit-tap-highlight-color: transparent; }
+    /* Hide number input spinners for a cleaner look */
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.6); }
+    /* Smooth scroll rows */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    /* Saved flash */
+    @keyframes savedFlash { 0% { background-color: rgba(34,197,94,0.25);} 100% { background-color: transparent;} }
+    .saved-flash { animation: savedFlash 0.6s ease-out; }
+  </style>
+</head>
+<body class="bg-ink text-zinc-100 font-sans min-h-screen antialiased">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 bg-ink/95 backdrop-blur border-b border-edge" style="padding-top: env(safe-area-inset-top);">
+    <div class="max-w-2xl mx-auto px-4 pt-3 pb-2">
+      <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+          <span class="text-ember text-2xl leading-none">&#127869;</span>
+          <div class="min-w-0">
+            <h1 class="text-lg font-extrabold tracking-tight leading-none">NUTRITION LOG</h1>
+            <p class="text-[11px] text-zinc-500 leading-none mt-0.5 truncate">Fuel the training. Hit your macros.</p>
+          </div>
+        </div>
+        <a href="index.html" class="flex-shrink-0 text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">&#128293; Training</a>
+      </div>
+
+      <!-- View tabs -->
+      <nav id="viewTabs" class="mt-3 flex gap-2 overflow-x-auto no-scrollbar pb-1"></nav>
+
+      <!-- Date navigation (Log view only) -->
+      <div id="dateNav" class="mt-1 mb-1 flex items-center gap-2 hidden"></div>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main id="viewContainer" class="max-w-2xl mx-auto px-4 py-4 pb-28"></main>
+
+  <!-- Footer actions -->
+  <footer class="fixed bottom-0 inset-x-0 z-30 bg-ink/95 backdrop-blur border-t border-edge" style="padding-bottom: env(safe-area-inset-bottom);">
+    <div class="max-w-2xl mx-auto px-4 py-2.5 flex items-center gap-2">
+      <div class="text-[11px] text-zinc-500 flex-1">All changes save automatically.</div>
+      <button id="exportBtn" class="text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Export</button>
+      <button id="importBtn" class="text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Import</button>
+    </div>
+  </footer>
+
+  <input type="file" id="importFile" accept="application/json" class="hidden" />
+
+  <script>
+  /* ============================================================
+     NUTRITION LOG — vanilla JS, localStorage-backed SPA
+     Sibling of the HIT Log Book (index.html).
+     ============================================================ */
+
+  const STORAGE_KEY = 'nutritionLog.v1';
+
+  const VIEWS = [
+    { id: 'log',     label: 'Log',     icon: '&#128203;' },
+    { id: 'foods',   label: 'Foods',   icon: '&#129385;' },
+    { id: 'targets', label: 'Targets', icon: '&#127919;' },
+  ];
+
+  // ---- Date helpers (local time — NOT toISOString, avoids UTC off-by-one) ----
+  function isoFromDate(d) {
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  }
+  function todayISO() { return isoFromDate(new Date()); }
+  function dateFromISO(iso) {
+    const p = iso.split('-').map(Number);
+    return new Date(p[0], p[1] - 1, p[2]);
+  }
+  function shiftDate(iso, delta) {
+    const d = dateFromISO(iso);
+    d.setDate(d.getDate() + delta);
+    return isoFromDate(d);
+  }
+  function fmtDate(iso) {
+    return dateFromISO(iso).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' });
+  }
+
+  // ---- Number helpers ----------------------------------------
+  function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function kcalFromMacros(p, c, f) { return 4 * p + 4 * c + 9 * f; }
+  function fmt(n) { return String(Math.round(n * 10) / 10); }
+  function fmtKcal(n) { return Math.round(n).toLocaleString(); }
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ---- State -------------------------------------------------
+  // store shape:
+  // { days: { "2026-07-07": { entries: [ { id, name, foodId|null, mode, servingLabel,
+  //     qty, base: {kcal,p,c,f}, ts } ] } },
+  //   foods: [ { id, name, mode: '100g'|'serving', servingLabel, kcal, p, c, f } ],
+  //   targets: { kcal, p, c, f },           // 0 = unset
+  //   meta: { currentDate, currentView, nextId, calc: { weight, goal } } }
+  let store = loadStore();
+
+  function loadStore() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') return normalizeStore(parsed);
+      }
+    } catch (e) {
+      console.warn('Could not parse saved data, starting fresh.', e);
+    }
+    return normalizeStore({});
+  }
+
+  function normalizeStore(s) {
+    s.days = s.days || {};
+    s.foods = Array.isArray(s.foods) ? s.foods : [];
+    s.targets = s.targets || {};
+    s.targets.kcal = num(s.targets.kcal);
+    s.targets.p = num(s.targets.p);
+    s.targets.c = num(s.targets.c);
+    s.targets.f = num(s.targets.f);
+    s.meta = s.meta || {};
+    s.meta.currentDate = todayISO(); // always boot on today
+    s.meta.currentView = ['log', 'foods', 'targets'].includes(s.meta.currentView) ? s.meta.currentView : 'log';
+    s.meta.nextId = s.meta.nextId || 1;
+    s.meta.calc = s.meta.calc || {};
+    s.meta.calc.weight = s.meta.calc.weight || '';
+    s.meta.calc.goal = ['cut', 'maintain', 'bulk'].includes(s.meta.calc.goal) ? s.meta.calc.goal : 'maintain';
+    return s;
+  }
+
+  function saveStore() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    } catch (e) {
+      console.error('Save failed', e);
+    }
+  }
+
+  function nextId() { return store.meta.nextId++; }
+
+  // Transient UI state (not persisted)
+  const ui = {
+    addOpen: false, addMode: 'library', selFoodId: null, libSearch: '',
+    qa: { name: '', p: '', c: '', f: '', kcal: '' }, qaKcalTouched: false,
+    foodsSearch: '', editFoodId: null,
+    foodForm: blankFoodForm(), formKcalTouched: false,
+  };
+  function blankFoodForm() {
+    return { name: '', mode: '100g', servingLabel: '', p: '', c: '', f: '', kcal: '' };
+  }
+
+  // ---- Day / entry data layer --------------------------------
+  function getDayRec(iso, create) {
+    if (!store.days[iso]) {
+      if (!create) return null;
+      store.days[iso] = { entries: [] };
+    }
+    return store.days[iso];
+  }
+
+  function entryTotals(en) {
+    const factor = en.mode === '100g' ? num(en.qty) / 100 : num(en.qty);
+    return {
+      kcal: num(en.base.kcal) * factor,
+      p: num(en.base.p) * factor,
+      c: num(en.base.c) * factor,
+      f: num(en.base.f) * factor,
+    };
+  }
+
+  function dayTotals(iso) {
+    const rec = getDayRec(iso, false);
+    const t = { kcal: 0, p: 0, c: 0, f: 0 };
+    if (!rec) return t;
+    rec.entries.forEach(en => {
+      const e = entryTotals(en);
+      t.kcal += e.kcal; t.p += e.p; t.c += e.c; t.f += e.f;
+    });
+    return t;
+  }
+
+  function addEntryFromFood(iso, foodId, qty) {
+    const food = getFood(foodId);
+    if (!food) return;
+    getDayRec(iso, true).entries.push({
+      id: nextId(), name: food.name, foodId: food.id,
+      mode: food.mode, servingLabel: food.servingLabel || '', qty: num(qty),
+      base: { kcal: num(food.kcal), p: num(food.p), c: num(food.c), f: num(food.f) },
+      ts: Date.now(),
+    });
+    saveStore();
+  }
+
+  function addQuickEntry(iso, name, kcal, p, c, f) {
+    getDayRec(iso, true).entries.push({
+      id: nextId(), name: name, foodId: null,
+      mode: 'serving', servingLabel: '', qty: 1,
+      base: { kcal: num(kcal), p: num(p), c: num(c), f: num(f) },
+      ts: Date.now(),
+    });
+    saveStore();
+  }
+
+  function findEntry(iso, id) {
+    const rec = getDayRec(iso, false);
+    return rec ? rec.entries.find(e => e.id === id) : null;
+  }
+
+  function setEntryQty(iso, id, qty) {
+    const en = findEntry(iso, id);
+    if (!en) return;
+    en.qty = num(qty);
+    saveStore();
+  }
+
+  function deleteEntry(iso, id) {
+    const rec = getDayRec(iso, false);
+    if (!rec) return;
+    rec.entries = rec.entries.filter(e => e.id !== id);
+    if (rec.entries.length === 0) delete store.days[iso];
+    saveStore();
+  }
+
+  // ---- Food library data layer -------------------------------
+  function getFood(id) { return store.foods.find(f => f.id === id) || null; }
+
+  function addFood(data) {
+    store.foods.push({
+      id: nextId(), name: data.name, mode: data.mode,
+      servingLabel: data.mode === 'serving' ? (data.servingLabel || '') : '',
+      kcal: num(data.kcal), p: num(data.p), c: num(data.c), f: num(data.f),
+    });
+    saveStore();
+  }
+
+  function updateFood(id, data) {
+    const food = getFood(id);
+    if (!food) return;
+    food.name = data.name;
+    food.mode = data.mode;
+    food.servingLabel = data.mode === 'serving' ? (data.servingLabel || '') : '';
+    food.kcal = num(data.kcal); food.p = num(data.p); food.c = num(data.c); food.f = num(data.f);
+    saveStore();
+  }
+
+  function deleteFood(id) {
+    store.foods = store.foods.filter(f => f.id !== id);
+    saveStore();
+  }
+
+  function filterFoods(query) {
+    const q = (query || '').trim().toLowerCase();
+    return store.foods
+      .filter(f => !q || f.name.toLowerCase().includes(q))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  function foodUnitLabel(food) {
+    if (food.mode === '100g') return 'per 100 g';
+    return 'per ' + (food.servingLabel ? food.servingLabel : 'serving');
+  }
+
+  function foodMacroLine(food) {
+    return fmtKcal(food.kcal) + ' kcal &middot; P ' + fmt(food.p) +
+      ' &middot; C ' + fmt(food.c) + ' &middot; F ' + fmt(food.f);
+  }
+
+  // ---- Target calculator -------------------------------------
+  // Bodyweight multipliers (standard bodybuilding practice):
+  //   kcal: 33/kg maintain, +300 bulk, -500 cut
+  //   protein: 2.0 g/kg (2.2 g/kg on a cut) · fat: 0.9 g/kg · carbs: remainder
+  function calcTargets(weightKg, goal) {
+    const w = num(weightKg);
+    if (w <= 0) return null;
+    let kcal = 33 * w + (goal === 'bulk' ? 300 : goal === 'cut' ? -500 : 0);
+    kcal = Math.round(kcal / 10) * 10;
+    const p = Math.round(((goal === 'cut' ? 2.2 : 2.0) * w) / 5) * 5;
+    const f = Math.round((0.9 * w) / 5) * 5;
+    const c = Math.max(0, Math.round(((kcal - 4 * p - 9 * f) / 4) / 5) * 5);
+    return { kcal: kcal, p: p, c: c, f: f };
+  }
+
+  // ---- Shared render helpers ---------------------------------
+  const viewTabs = document.getElementById('viewTabs');
+  const dateNav = document.getElementById('dateNav');
+  const viewContainer = document.getElementById('viewContainer');
+
+  const INPUT_CLS = 'w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-base font-bold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 focus:border-ember/60';
+
+  function flash(el) {
+    if (!el) return;
+    el.classList.remove('saved-flash');
+    void el.offsetWidth; // reflow to restart animation
+    el.classList.add('saved-flash');
+  }
+
+  function suffixInput(inner, suffix) {
+    return '<div class="relative">' + inner +
+      '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + suffix + '</span></div>';
+  }
+
+  // ---- Tabs & date nav ---------------------------------------
+  function renderTabs() {
+    viewTabs.innerHTML = '';
+    VIEWS.forEach(v => {
+      const active = v.id === store.meta.currentView;
+      const btn = document.createElement('button');
+      btn.className =
+        'flex-1 flex-shrink-0 px-3.5 py-2 rounded-xl text-sm font-bold border transition-colors ' +
+        (active
+          ? 'bg-ember text-white border-ember shadow-lg shadow-ember/20'
+          : 'bg-panel2 text-zinc-300 border-edge active:bg-edge');
+      btn.innerHTML = '<span class="mr-1">' + v.icon + '</span>' + v.label;
+      btn.addEventListener('click', () => switchView(v.id));
+      viewTabs.appendChild(btn);
+    });
+  }
+
+  function renderDateNav() {
+    if (store.meta.currentView !== 'log') {
+      dateNav.classList.add('hidden');
+      dateNav.innerHTML = '';
+      return;
+    }
+    dateNav.classList.remove('hidden');
+    const iso = store.meta.currentDate;
+    const isToday = iso === todayISO();
+    dateNav.innerHTML =
+      '<button id="prevDayBtn" class="w-8 h-8 flex-shrink-0 rounded-lg bg-panel2 border border-edge text-zinc-300 active:bg-edge text-lg leading-none" aria-label="Previous day">&#8249;</button>' +
+      '<input type="date" id="datePick" value="' + iso + '" class="flex-1 min-w-0 bg-panel2 border border-edge rounded-lg px-3 py-1.5 text-sm font-semibold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60" />' +
+      '<button id="nextDayBtn" class="w-8 h-8 flex-shrink-0 rounded-lg bg-panel2 border border-edge text-zinc-300 active:bg-edge text-lg leading-none" aria-label="Next day">&#8250;</button>' +
+      (isToday ? '' : '<button id="todayBtn" class="flex-shrink-0 text-xs font-bold px-3 py-2 rounded-lg bg-ember text-white active:bg-red-600">Today</button>');
+    document.getElementById('prevDayBtn').addEventListener('click', () => goToDate(shiftDate(store.meta.currentDate, -1)));
+    document.getElementById('nextDayBtn').addEventListener('click', () => goToDate(shiftDate(store.meta.currentDate, 1)));
+    document.getElementById('datePick').addEventListener('change', (e) => {
+      if (e.target.value) goToDate(e.target.value);
+    });
+    const todayBtn = document.getElementById('todayBtn');
+    if (todayBtn) todayBtn.addEventListener('click', () => goToDate(todayISO()));
+  }
+
+  function switchView(id) {
+    store.meta.currentView = id;
+    ui.addOpen = false;   // close the log's add panel when leaving/re-entering a view
+    ui.selFoodId = null;
+    saveStore();
+    renderAll();
+  }
+
+  function goToDate(iso) {
+    store.meta.currentDate = iso;
+    saveStore();
+    renderDateNav();
+    renderView();
+  }
+
+  // ---- Log view ----------------------------------------------
+  function progressBar(label, value, target, barColor, unit) {
+    const pct = target > 0 ? Math.min(100, (value / target) * 100) : 0;
+    const over = value > target;
+    return (
+      '<div class="mt-2.5">' +
+        '<div class="flex justify-between text-[11px] font-semibold">' +
+          '<span class="text-zinc-400">' + label + '</span>' +
+          '<span class="' + (over ? 'text-ember font-bold' : 'text-zinc-500') + '">' +
+            fmt(value) + ' / ' + fmt(target) + unit + (over ? ' &middot; over' : '') + '</span>' +
+        '</div>' +
+        '<div class="mt-1 h-2 rounded-full bg-panel2 overflow-hidden">' +
+          '<div class="h-full rounded-full ' + (over ? 'bg-ember' : barColor) + '" style="width:' + pct + '%"></div>' +
+        '</div>' +
+      '</div>'
+    );
+  }
+
+  function totalsInnerHTML() {
+    const t = dayTotals(store.meta.currentDate);
+    const tg = store.targets;
+    const hasTargets = tg.kcal > 0 || tg.p > 0 || tg.c > 0 || tg.f > 0;
+    let html =
+      '<div class="flex items-end justify-between gap-3">' +
+        '<div>' +
+          '<div class="text-[11px] font-bold uppercase tracking-widest text-zinc-500">Today’s total</div>' +
+          '<div class="text-3xl font-extrabold tracking-tight">' + fmtKcal(t.kcal) +
+            (tg.kcal > 0 ? '<span class="text-zinc-500 text-xl font-bold"> / ' + fmtKcal(tg.kcal) + '</span>' : '') +
+            '<span class="text-sm font-bold text-zinc-500 ml-1">kcal</span></div>' +
+        '</div>';
+    if (tg.kcal > 0) {
+      const rem = tg.kcal - t.kcal;
+      html += '<div class="text-right text-sm font-bold ' + (rem >= 0 ? 'text-emerald-400' : 'text-ember') + '">' +
+        fmtKcal(Math.abs(rem)) + '<span class="block text-[10px] font-semibold uppercase tracking-wide ' +
+        (rem >= 0 ? 'text-emerald-500/70' : 'text-ember/70') + '">' + (rem >= 0 ? 'kcal left' : 'kcal over') + '</span></div>';
+    }
+    html += '</div>';
+    html += '<div class="mt-1.5 text-[11px] text-zinc-500 font-semibold">P ' + fmt(t.p) + ' g &middot; C ' + fmt(t.c) + ' g &middot; F ' + fmt(t.f) + ' g</div>';
+    if (hasTargets) {
+      if (tg.kcal > 0) html += progressBar('Calories', t.kcal, tg.kcal, 'bg-ember', '');
+      if (tg.p > 0) html += progressBar('Protein', t.p, tg.p, 'bg-emerald-500', ' g');
+      if (tg.c > 0) html += progressBar('Carbs', t.c, tg.c, 'bg-sky-500', ' g');
+      if (tg.f > 0) html += progressBar('Fat', t.f, tg.f, 'bg-amber-500', ' g');
+    } else {
+      html += '<button id="setTargetsHint" class="mt-2 text-[12px] font-semibold text-ember">Set your daily targets &rarr;</button>';
+    }
+    return html;
+  }
+
+  function wireTotalsCard() {
+    const hint = document.getElementById('setTargetsHint');
+    if (hint) hint.addEventListener('click', () => switchView('targets'));
+  }
+
+  function refreshTotalsCard() {
+    const card = document.getElementById('totalsCard');
+    if (card) {
+      card.innerHTML = totalsInnerHTML();
+      wireTotalsCard();
+    }
+  }
+
+  function entrySubText(en) {
+    const t = entryTotals(en);
+    return fmtKcal(t.kcal) + ' kcal &middot; P ' + fmt(t.p) + ' &middot; C ' + fmt(t.c) + ' &middot; F ' + fmt(t.f);
+  }
+
+  function libResultsHTML() {
+    const foods = filterFoods(ui.libSearch);
+    if (store.foods.length === 0) {
+      return '<div class="text-center py-4 text-sm text-zinc-500">Your food library is empty.' +
+        '<button id="goFoodsBtn" class="block mx-auto mt-2 text-xs font-bold px-4 py-2 rounded-lg bg-panel2 border border-edge text-ember">+ Add foods to your library</button></div>';
+    }
+    if (foods.length === 0) {
+      return '<div class="text-center py-4 text-sm text-zinc-500">No foods match &ldquo;' + esc(ui.libSearch) + '&rdquo;</div>';
+    }
+    return foods.map(f => {
+      const sel = f.id === ui.selFoodId;
+      return '<button data-id="' + f.id + '" class="lib-food w-full text-left px-3 py-2.5 rounded-xl border mb-1.5 ' +
+        (sel ? 'bg-emberDim/30 border-ember/60' : 'bg-panel2 border-edge active:bg-edge') + '">' +
+        '<span class="block font-bold text-sm">' + esc(f.name) + '</span>' +
+        '<span class="block text-[11px] text-zinc-500">' + foodMacroLine(f) + ' <span class="text-zinc-600">&middot; ' + foodUnitLabel(f) + '</span></span>' +
+        '</button>';
+    }).join('');
+  }
+
+  function wireLibResults() {
+    const goFoods = document.getElementById('goFoodsBtn');
+    if (goFoods) goFoods.addEventListener('click', () => switchView('foods'));
+    viewContainer.querySelectorAll('.lib-food').forEach(btn => {
+      btn.addEventListener('click', () => {
+        ui.selFoodId = +btn.dataset.id;
+        renderView();
+        const qty = document.getElementById('libQty');
+        if (qty) { qty.focus(); qty.select(); }
+      });
+    });
+  }
+
+  function addPanelHTML() {
+    if (!ui.addOpen) {
+      return '<button id="addFoodBtn" class="w-full py-3.5 rounded-2xl bg-ember text-white font-extrabold text-base shadow-lg shadow-ember/20 active:bg-red-600">+ Add food</button>';
+    }
+    const modeBtn = (mode, label) =>
+      '<button data-mode="' + mode + '" class="add-mode flex-1 px-3 py-2 rounded-xl text-sm font-bold border ' +
+      (ui.addMode === mode
+        ? 'bg-ember text-white border-ember'
+        : 'bg-panel2 text-zinc-300 border-edge active:bg-edge') + '">' + label + '</button>';
+
+    let body = '';
+    if (ui.addMode === 'library') {
+      const sel = ui.selFoodId ? getFood(ui.selFoodId) : null;
+      body =
+        '<input type="text" id="libSearchInput" placeholder="Search your foods..." value="' + esc(ui.libSearch) + '" ' +
+          'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
+        (sel
+          ? '<div class="mb-2 p-3 rounded-xl bg-emberDim/20 border border-ember/40">' +
+              '<div class="text-sm font-bold mb-2">' + esc(sel.name) + ' <span class="text-[11px] text-zinc-500 font-semibold">' + foodUnitLabel(sel) + '</span></div>' +
+              '<div class="flex items-center gap-2">' +
+                '<div class="relative flex-1">' +
+                  '<input type="number" id="libQty" inputmode="decimal" step="0.5" min="0" value="' + (sel.mode === '100g' ? 100 : 1) + '" class="' + INPUT_CLS + ' pr-10" />' +
+                  '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + (sel.mode === '100g' ? 'g' : '&times;') + '</span>' +
+                '</div>' +
+                '<button id="libAddBtn" class="flex-shrink-0 px-5 py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add</button>' +
+              '</div>' +
+            '</div>'
+          : '') +
+        '<div id="libResults" class="max-h-72 overflow-y-auto">' + libResultsHTML() + '</div>';
+    } else {
+      body =
+        '<input type="text" id="qaName" placeholder="Food name" value="' + esc(ui.qa.name) + '" ' +
+          'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
+        '<div class="grid grid-cols-4 gap-2 mb-2">' +
+          ['p', 'c', 'f'].map(k =>
+            '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">' +
+              (k === 'p' ? 'Protein' : k === 'c' ? 'Carbs' : 'Fat') + '</label>' +
+              suffixInput('<input type="number" inputmode="decimal" step="0.1" min="0" placeholder="0" data-qa="' + k + '" value="' + esc(ui.qa[k]) + '" class="qa-macro ' + INPUT_CLS + ' pr-7 text-sm"/>', 'g') +
+            '</div>').join('') +
+          '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">Kcal</label>' +
+            '<input type="number" id="qaKcal" inputmode="decimal" step="1" min="0" placeholder="0" value="' + esc(ui.qa.kcal) + '" class="' + INPUT_CLS + ' text-sm"/></div>' +
+        '</div>' +
+        '<button id="qaAddBtn" class="w-full py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add to log</button>';
+    }
+
+    return (
+      '<div class="rounded-2xl bg-panel border border-edge p-3">' +
+        '<div class="flex items-center gap-2 mb-3">' +
+          modeBtn('library', 'From library') + modeBtn('quick', 'Quick add') +
+          '<button id="closeAddBtn" class="w-9 h-9 flex-shrink-0 rounded-xl bg-panel2 border border-edge text-zinc-400 text-lg leading-none" aria-label="Close">&times;</button>' +
+        '</div>' + body +
+      '</div>'
+    );
+  }
+
+  function wireAddPanel() {
+    const openBtn = document.getElementById('addFoodBtn');
+    if (openBtn) {
+      openBtn.addEventListener('click', () => { ui.addOpen = true; renderView(); });
+      return;
+    }
+    document.getElementById('closeAddBtn').addEventListener('click', () => {
+      ui.addOpen = false; ui.selFoodId = null;
+      renderView();
+    });
+    viewContainer.querySelectorAll('.add-mode').forEach(btn => {
+      btn.addEventListener('click', () => { ui.addMode = btn.dataset.mode; renderView(); });
+    });
+
+    if (ui.addMode === 'library') {
+      const search = document.getElementById('libSearchInput');
+      search.addEventListener('input', (e) => {
+        ui.libSearch = e.target.value;
+        document.getElementById('libResults').innerHTML = libResultsHTML();
+        wireLibResults();
+      });
+      wireLibResults();
+      const addBtn = document.getElementById('libAddBtn');
+      if (addBtn) addBtn.addEventListener('click', () => {
+        const qty = num(document.getElementById('libQty').value);
+        if (qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
+        addEntryFromFood(store.meta.currentDate, ui.selFoodId, qty);
+        ui.addOpen = false; ui.selFoodId = null; ui.libSearch = '';
+        renderView();
+      });
+    } else {
+      document.getElementById('qaName').addEventListener('input', (e) => { ui.qa.name = e.target.value; });
+      viewContainer.querySelectorAll('.qa-macro').forEach(input => {
+        input.addEventListener('input', (e) => {
+          ui.qa[e.target.dataset.qa] = e.target.value;
+          if (!ui.qaKcalTouched) {
+            const k = Math.round(kcalFromMacros(num(ui.qa.p), num(ui.qa.c), num(ui.qa.f)) * 10) / 10;
+            ui.qa.kcal = k > 0 ? String(k) : '';
+            document.getElementById('qaKcal').value = ui.qa.kcal;
+          }
+        });
+      });
+      document.getElementById('qaKcal').addEventListener('input', (e) => {
+        ui.qa.kcal = e.target.value;
+        ui.qaKcalTouched = true;
+      });
+      document.getElementById('qaAddBtn').addEventListener('click', () => {
+        const name = ui.qa.name.trim();
+        if (!name) { alert('Give the food a name.'); return; }
+        addQuickEntry(store.meta.currentDate, name, ui.qa.kcal, ui.qa.p, ui.qa.c, ui.qa.f);
+        ui.qa = { name: '', p: '', c: '', f: '', kcal: '' };
+        ui.qaKcalTouched = false;
+        ui.addOpen = false;
+        renderView();
+      });
+    }
+  }
+
+  function renderLog() {
+    const iso = store.meta.currentDate;
+    const rec = getDayRec(iso, false);
+    const entries = rec ? rec.entries : [];
+    const isToday = iso === todayISO();
+
+    let html =
+      '<div class="mb-4">' +
+        '<div class="text-[11px] font-bold uppercase tracking-widest text-ember">' +
+          (isToday ? 'Today' : 'Log') + '</div>' +
+        '<h2 class="text-2xl font-extrabold tracking-tight">' + fmtDate(iso) + '</h2>' +
+      '</div>' +
+      '<section id="totalsCard" class="mb-4 rounded-2xl bg-panel border border-edge p-4">' + totalsInnerHTML() + '</section>';
+
+    if (entries.length === 0) {
+      html += '<div class="mb-4 text-center py-6 text-sm text-zinc-500">Nothing logged yet &mdash; add your first food below.</div>';
+    } else {
+      html += '<div class="mb-4 space-y-2">' + entries.map(en =>
+        '<div class="flex items-center gap-2.5 rounded-2xl bg-panel border border-edge px-4 py-3">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="font-bold text-[15px] leading-tight truncate">' + esc(en.name) + '</div>' +
+            '<div class="entry-sub text-[11px] text-zinc-500 mt-0.5" data-id="' + en.id + '">' + entrySubText(en) + '</div>' +
+          '</div>' +
+          '<div class="relative w-24 flex-shrink-0">' +
+            '<input type="number" inputmode="decimal" step="0.5" min="0" value="' + en.qty + '" data-id="' + en.id + '" ' +
+              'class="entry-qty w-full bg-panel2 border border-edge rounded-xl pl-3 pr-8 py-2 text-sm font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60" />' +
+            '<span class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + (en.mode === '100g' ? 'g' : '&times;') + '</span>' +
+          '</div>' +
+          '<button data-id="' + en.id + '" class="entry-del w-9 h-9 flex-shrink-0 rounded-xl bg-panel2 border border-emberDim/50 text-ember/90 text-lg leading-none active:bg-edge" aria-label="Delete entry">&times;</button>' +
+        '</div>').join('') + '</div>';
+    }
+
+    html += addPanelHTML();
+    viewContainer.innerHTML = html;
+
+    wireTotalsCard();
+    wireAddPanel();
+
+    viewContainer.querySelectorAll('.entry-qty').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const id = +e.target.dataset.id;
+        setEntryQty(iso, id, e.target.value);
+        const en = findEntry(iso, id);
+        const sub = viewContainer.querySelector('.entry-sub[data-id="' + id + '"]');
+        if (en && sub) sub.innerHTML = entrySubText(en);
+        refreshTotalsCard();
+        flash(e.target);
+      });
+    });
+    viewContainer.querySelectorAll('.entry-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = +btn.dataset.id;
+        const en = findEntry(iso, id);
+        if (en && confirm('Delete "' + en.name + '" from this day?')) {
+          deleteEntry(iso, id);
+          renderView();
+        }
+      });
+    });
+  }
+
+  // ---- Foods view --------------------------------------------
+  function foodsListHTML() {
+    const foods = filterFoods(ui.foodsSearch);
+    if (store.foods.length === 0) {
+      return '<div class="text-center py-6 text-sm text-zinc-500">No foods yet. Add the things you eat most &mdash; logging gets faster every day.</div>';
+    }
+    if (foods.length === 0) {
+      return '<div class="text-center py-6 text-sm text-zinc-500">No foods match &ldquo;' + esc(ui.foodsSearch) + '&rdquo;</div>';
+    }
+    return '<div class="space-y-2">' + foods.map(f =>
+      '<div class="flex items-center gap-2.5 rounded-2xl bg-panel border ' + (f.id === ui.editFoodId ? 'border-ember/60' : 'border-edge') + ' px-4 py-3">' +
+        '<div class="flex-1 min-w-0">' +
+          '<div class="font-bold text-[15px] leading-tight truncate">' + esc(f.name) +
+            ' <span class="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-panel2 border border-edge text-zinc-400 align-middle">' + foodUnitLabel(f) + '</span></div>' +
+          '<div class="text-[11px] text-zinc-500 mt-0.5">' + foodMacroLine(f) + '</div>' +
+        '</div>' +
+        '<button data-id="' + f.id + '" class="food-edit flex-shrink-0 text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Edit</button>' +
+        '<button data-id="' + f.id + '" class="food-del w-9 h-9 flex-shrink-0 rounded-xl bg-panel2 border border-emberDim/50 text-ember/90 text-lg leading-none active:bg-edge" aria-label="Delete food">&times;</button>' +
+      '</div>').join('') + '</div>';
+  }
+
+  function wireFoodsList() {
+    viewContainer.querySelectorAll('.food-edit').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const food = getFood(+btn.dataset.id);
+        if (!food) return;
+        ui.editFoodId = food.id;
+        ui.foodForm = {
+          name: food.name, mode: food.mode, servingLabel: food.servingLabel || '',
+          p: String(food.p), c: String(food.c), f: String(food.f), kcal: String(food.kcal),
+        };
+        ui.formKcalTouched = Math.abs(num(food.kcal) - kcalFromMacros(num(food.p), num(food.c), num(food.f))) > 0.5;
+        renderFoods();
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      });
+    });
+    viewContainer.querySelectorAll('.food-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const food = getFood(+btn.dataset.id);
+        if (food && confirm('Delete "' + food.name + '" from your library? Logged entries keep their values.')) {
+          if (ui.editFoodId === food.id) { ui.editFoodId = null; ui.foodForm = blankFoodForm(); }
+          deleteFood(food.id);
+          renderFoods();
+        }
+      });
+    });
+  }
+
+  function renderFoods() {
+    const form = ui.foodForm;
+    const editing = ui.editFoodId !== null;
+    const modeBtn = (mode, label) =>
+      '<button data-mode="' + mode + '" class="unit-mode flex-1 px-3 py-2 rounded-xl text-sm font-bold border ' +
+      (form.mode === mode
+        ? 'bg-ember text-white border-ember'
+        : 'bg-panel2 text-zinc-300 border-edge active:bg-edge') + '">' + label + '</button>';
+
+    let html =
+      '<div class="mb-4">' +
+        '<div class="text-[11px] font-bold uppercase tracking-widest text-ember">Library</div>' +
+        '<h2 class="text-2xl font-extrabold tracking-tight">My Foods</h2>' +
+      '</div>' +
+
+      '<section class="mb-4 rounded-2xl bg-panel border ' + (editing ? 'border-ember/60' : 'border-edge') + ' p-4">' +
+        '<h3 class="font-bold text-[15px] mb-3">' + (editing ? 'Edit food' : 'Add a food') + '</h3>' +
+        '<input type="text" id="foodName" placeholder="Food name (e.g. Chicken breast)" value="' + esc(form.name) + '" ' +
+          'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
+        '<div class="flex gap-2 mb-2">' + modeBtn('100g', 'Per 100 g') + modeBtn('serving', 'Per serving') + '</div>' +
+        (form.mode === 'serving'
+          ? '<input type="text" id="servingLabel" placeholder="Serving label (e.g. 1 scoop, 1 egg)" value="' + esc(form.servingLabel) + '" ' +
+              'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />'
+          : '') +
+        '<div class="grid grid-cols-4 gap-2 mb-1">' +
+          ['p', 'c', 'f'].map(k =>
+            '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">' +
+              (k === 'p' ? 'Protein' : k === 'c' ? 'Carbs' : 'Fat') + '</label>' +
+              suffixInput('<input type="number" inputmode="decimal" step="0.1" min="0" placeholder="0" data-macro="' + k + '" value="' + esc(form[k]) + '" class="food-macro ' + INPUT_CLS + ' pr-7 text-sm"/>', 'g') +
+            '</div>').join('') +
+          '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">Kcal</label>' +
+            '<input type="number" id="foodKcal" inputmode="decimal" step="1" min="0" placeholder="0" value="' + esc(form.kcal) + '" class="' + INPUT_CLS + ' text-sm"/></div>' +
+        '</div>' +
+        '<p class="text-[10px] text-zinc-600 mb-3">Kcal auto-fills from macros (4 / 4 / 9) &mdash; type over it to match a label.</p>' +
+        '<div class="flex gap-2">' +
+          '<button id="saveFoodBtn" class="flex-1 py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">' + (editing ? 'Save changes' : '+ Add to library') + '</button>' +
+          (editing ? '<button id="cancelEditBtn" class="px-4 py-2.5 rounded-xl bg-panel2 border border-edge text-sm font-bold text-zinc-300 active:bg-edge">Cancel</button>' : '') +
+        '</div>' +
+      '</section>' +
+
+      (store.foods.length > 5
+        ? '<input type="text" id="foodsSearchInput" placeholder="Search foods..." value="' + esc(ui.foodsSearch) + '" ' +
+            'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-3" />'
+        : '') +
+      '<div id="foodsList">' + foodsListHTML() + '</div>';
+
+    viewContainer.innerHTML = html;
+
+    // Form wiring
+    document.getElementById('foodName').addEventListener('input', (e) => { ui.foodForm.name = e.target.value; });
+    viewContainer.querySelectorAll('.unit-mode').forEach(btn => {
+      btn.addEventListener('click', () => { ui.foodForm.mode = btn.dataset.mode; renderFoods(); });
+    });
+    const servingLabel = document.getElementById('servingLabel');
+    if (servingLabel) servingLabel.addEventListener('input', (e) => { ui.foodForm.servingLabel = e.target.value; });
+    viewContainer.querySelectorAll('.food-macro').forEach(input => {
+      input.addEventListener('input', (e) => {
+        ui.foodForm[e.target.dataset.macro] = e.target.value;
+        if (!ui.formKcalTouched) {
+          const k = Math.round(kcalFromMacros(num(ui.foodForm.p), num(ui.foodForm.c), num(ui.foodForm.f)) * 10) / 10;
+          ui.foodForm.kcal = k > 0 ? String(k) : '';
+          document.getElementById('foodKcal').value = ui.foodForm.kcal;
+        }
+      });
+    });
+    document.getElementById('foodKcal').addEventListener('input', (e) => {
+      ui.foodForm.kcal = e.target.value;
+      ui.formKcalTouched = true;
+    });
+    document.getElementById('saveFoodBtn').addEventListener('click', () => {
+      const name = ui.foodForm.name.trim();
+      if (!name) { alert('Give the food a name.'); return; }
+      const data = {
+        name: name, mode: ui.foodForm.mode, servingLabel: ui.foodForm.servingLabel.trim(),
+        p: ui.foodForm.p, c: ui.foodForm.c, f: ui.foodForm.f,
+        kcal: ui.foodForm.kcal !== '' ? ui.foodForm.kcal
+          : kcalFromMacros(num(ui.foodForm.p), num(ui.foodForm.c), num(ui.foodForm.f)),
+      };
+      if (ui.editFoodId !== null) updateFood(ui.editFoodId, data);
+      else addFood(data);
+      ui.editFoodId = null;
+      ui.foodForm = blankFoodForm();
+      ui.formKcalTouched = false;
+      renderFoods();
+    });
+    const cancelBtn = document.getElementById('cancelEditBtn');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => {
+      ui.editFoodId = null;
+      ui.foodForm = blankFoodForm();
+      ui.formKcalTouched = false;
+      renderFoods();
+    });
+
+    // Search + list wiring
+    const search = document.getElementById('foodsSearchInput');
+    if (search) search.addEventListener('input', (e) => {
+      ui.foodsSearch = e.target.value;
+      document.getElementById('foodsList').innerHTML = foodsListHTML();
+      wireFoodsList();
+    });
+    wireFoodsList();
+  }
+
+  // ---- Targets view ------------------------------------------
+  function sanityLineHTML() {
+    const tg = store.targets;
+    const macroKcal = kcalFromMacros(tg.p, tg.c, tg.f);
+    if (macroKcal <= 0) return '<span class="text-zinc-600">Macros (4 / 4 / 9) will be sanity-checked here.</span>';
+    const mismatch = tg.kcal > 0 && Math.abs(macroKcal - tg.kcal) > 50;
+    return '<span class="' + (mismatch ? 'text-ember' : 'text-zinc-500') + '">4&middot;P + 4&middot;C + 9&middot;F = ' +
+      fmtKcal(macroKcal) + ' kcal' + (mismatch ? ' &mdash; doesn’t match your kcal target' : '') + '</span>';
+  }
+
+  function calcResultHTML() {
+    const r = calcTargets(store.meta.calc.weight, store.meta.calc.goal);
+    if (!r) return '<span class="text-zinc-600">Enter your bodyweight to see suggested targets.</span>';
+    return '<span class="text-lg font-extrabold">' + fmtKcal(r.kcal) + ' kcal</span>' +
+      '<span class="block text-[12px] font-bold text-zinc-400 mt-0.5">P ' + r.p + ' g &middot; C ' + r.c + ' g &middot; F ' + r.f + ' g</span>';
+  }
+
+  function renderTargets() {
+    const tg = store.targets;
+    const goalBtn = (goal, label) =>
+      '<button data-goal="' + goal + '" class="calc-goal flex-1 px-3 py-2 rounded-xl text-sm font-bold border ' +
+      (store.meta.calc.goal === goal
+        ? 'bg-ember text-white border-ember'
+        : 'bg-panel2 text-zinc-300 border-edge active:bg-edge') + '">' + label + '</button>';
+    const targetField = (key, label, suffix, step) =>
+      '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">' + label + '</label>' +
+        suffixInput('<input type="number" inputmode="numeric" step="' + step + '" min="0" placeholder="0" data-target="' + key + '" value="' +
+          (tg[key] > 0 ? tg[key] : '') + '" class="target-input ' + INPUT_CLS + ' pr-10"/>', suffix) +
+      '</div>';
+
+    viewContainer.innerHTML =
+      '<div class="mb-4">' +
+        '<div class="text-[11px] font-bold uppercase tracking-widest text-ember">Goals</div>' +
+        '<h2 class="text-2xl font-extrabold tracking-tight">Daily Targets</h2>' +
+      '</div>' +
+
+      '<section class="mb-4 rounded-2xl bg-panel border border-edge p-4">' +
+        '<h3 class="font-bold text-[15px] mb-3">Your targets</h3>' +
+        '<div class="grid grid-cols-2 gap-2">' +
+          targetField('kcal', 'Calories', 'kcal', 10) +
+          targetField('p', 'Protein', 'g', 5) +
+          targetField('c', 'Carbs', 'g', 5) +
+          targetField('f', 'Fat', 'g', 5) +
+        '</div>' +
+        '<div id="sanityLine" class="mt-2 text-[11px] font-semibold">' + sanityLineHTML() + '</div>' +
+      '</section>' +
+
+      '<section class="rounded-2xl bg-panel border border-edge p-4">' +
+        '<h3 class="font-bold text-[15px]">Target calculator</h3>' +
+        '<p class="text-[11px] text-zinc-500 mt-0.5 mb-3">33 kcal/kg (+300 bulk / &minus;500 cut) &middot; protein 2 g/kg (2.2 on a cut) &middot; fat 0.9 g/kg &middot; carbs fill the rest.</p>' +
+        '<div class="flex items-center gap-2 mb-2">' +
+          '<div class="relative flex-1">' +
+            '<input type="number" id="calcWeight" inputmode="decimal" step="0.5" min="0" placeholder="Bodyweight" value="' + esc(store.meta.calc.weight) + '" class="' + INPUT_CLS + ' pr-9"/>' +
+            '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">kg</span>' +
+          '</div>' +
+        '</div>' +
+        '<div class="flex gap-2 mb-3">' + goalBtn('cut', 'Cut') + goalBtn('maintain', 'Maintain') + goalBtn('bulk', 'Bulk') + '</div>' +
+        '<div id="calcResult" class="rounded-xl bg-panel2 border border-edge px-3 py-2.5 mb-3 text-center">' + calcResultHTML() + '</div>' +
+        '<button id="applyCalcBtn" class="w-full py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Apply to my targets</button>' +
+      '</section>';
+
+    viewContainer.querySelectorAll('.target-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        store.targets[e.target.dataset.target] = num(e.target.value);
+        saveStore();
+        document.getElementById('sanityLine').innerHTML = sanityLineHTML();
+        flash(e.target);
+      });
+    });
+    document.getElementById('calcWeight').addEventListener('input', (e) => {
+      store.meta.calc.weight = e.target.value;
+      saveStore();
+      document.getElementById('calcResult').innerHTML = calcResultHTML();
+    });
+    viewContainer.querySelectorAll('.calc-goal').forEach(btn => {
+      btn.addEventListener('click', () => {
+        store.meta.calc.goal = btn.dataset.goal;
+        saveStore();
+        renderTargets();
+      });
+    });
+    document.getElementById('applyCalcBtn').addEventListener('click', () => {
+      const r = calcTargets(store.meta.calc.weight, store.meta.calc.goal);
+      if (!r) { alert('Enter your bodyweight first.'); return; }
+      store.targets = r;
+      saveStore();
+      renderTargets();
+    });
+  }
+
+  // ---- View dispatch -----------------------------------------
+  function renderView() {
+    if (store.meta.currentView === 'foods') renderFoods();
+    else if (store.meta.currentView === 'targets') renderTargets();
+    else renderLog();
+  }
+
+  function renderAll() {
+    renderTabs();
+    renderDateNav();
+    renderView();
+  }
+
+  // ---- Export / Import ---------------------------------------
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'nutrition-log-' + todayISO() + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  const importFile = document.getElementById('importFile');
+  document.getElementById('importBtn').addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || typeof data !== 'object' || typeof data.days !== 'object' || !Array.isArray(data.foods)) {
+          throw new Error('Not a nutrition log export');
+        }
+        if (!confirm('Importing will replace all current nutrition data on this device. Continue?')) return;
+        store = normalizeStore(data);
+        saveStore();
+        renderAll();
+        alert('Data imported.');
+      } catch (err) {
+        alert('Could not import: ' + err.message);
+      } finally {
+        importFile.value = '';
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // ---- Boot --------------------------------------------------
+  saveStore(); // persist normalized boot state (currentDate = today)
+  renderAll();
+  </script>
+</body>
+</html>

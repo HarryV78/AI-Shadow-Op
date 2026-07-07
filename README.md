@@ -1,9 +1,11 @@
-# HIT Log Book
+# HIT Log Book & Nutrition Log
 
-A mobile-first, dark-themed single-page web app for tracking a 4-day
-High-Intensity Training (HIT) split. Built with plain HTML5, Tailwind CSS,
-and vanilla JavaScript. All data is stored in the browser's `localStorage`,
-so your log persists between visits with no server or account required.
+Two mobile-first, dark-themed single-page web apps: a 4-day
+High-Intensity Training (HIT) log book (`index.html`) and a daily
+calorie & macro tracker (`nutrition.html`), cross-linked in each
+other's headers. Built with plain HTML5, Tailwind CSS, and vanilla
+JavaScript. All data is stored in the browser's `localStorage`, so your
+logs persist between visits with no server or account required.
 
 ## The split
 
@@ -30,11 +32,35 @@ so your log persists between visits with no server or account required.
 - **Export / Import** — back up or move your data as a JSON file (handy since
   `localStorage` is tied to one browser on one device).
 
+## Nutrition Log (`nutrition.html`)
+
+A flat, chronological daily food log with three views — **Log**, **Foods**,
+**Targets** — designed to sit alongside the training log book.
+
+- **Personal food library** — save a food once (per-100 g or per-serving
+  macros); after that, logging is two taps: pick it, enter grams or
+  servings. One-off "Quick add" entries cover foods not worth saving.
+  Kcal auto-fills from macros (4 / 4 / 9) but can be typed over to match
+  a label. Entries snapshot their macros, so editing or deleting a
+  library food never rewrites logged history.
+- **Daily totals & targets** — big kcal total with remaining/over, plus
+  progress bars for calories, protein, carbs, and fat against your
+  targets.
+- **Target calculator** — suggests targets from bodyweight and goal:
+  33 kcal/kg (+300 bulk / −500 cut), protein 2 g/kg (2.2 on a cut),
+  fat 0.9 g/kg, carbs fill the remainder. One tap applies the result.
+- **Date navigation** — prev/next day arrows, a date picker, and a
+  "Today" shortcut; past days remain fully editable.
+- **Autosave + Export/Import** — same pattern as the log book, stored
+  under its own `localStorage` key (`nutritionLog.v1`), fully isolated
+  from the training data (`hitLogBook.v1`).
+
 ## Running it
 
-It's a single static file. Either:
+Both apps are static files. Either:
 
-- Open `index.html` directly in any modern browser, or
+- Open `index.html` (training) or `nutrition.html` (nutrition) directly
+  in any modern browser, or
 - Serve the folder, e.g. `python3 -m http.server` then visit
   `http://localhost:8000`.
 
