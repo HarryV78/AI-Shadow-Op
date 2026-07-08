@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a0a0a" />
+  <title>HIT Log Book</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    // Guard so a failed CDN load (offline) doesn't throw — the app itself still works unstyled.
+    window.tailwind = window.tailwind || {};
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            ink: '#0a0a0a',
+            panel: '#141414',
+            panel2: '#1c1c1c',
+            edge: '#2a2a2a',
+            ember: '#ef4444',
+            emberDim: '#7f1d1d',
+          },
+          fontFamily: {
+            sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'sans-serif'],
+          },
+        },
+      },
+    };
+  </script>
+  <style>
+    html { -webkit-text-size-adjust: 100%; }
+    body { -webkit-tap-highlight-color: transparent; }
+    /* Hide number input spinners for a cleaner look */
+    input[type=number]::-webkit-inner-spin-button,
+    input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+    input[type=number] { -moz-appearance: textfield; }
+    /* Flame pulse for HIT cues */
+    @keyframes emberPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.55; transform: scale(1.18); }
+    }
+    .ember-pulse { animation: emberPulse 1.8s ease-in-out infinite; }
+    /* Smooth tab underline + scroll */
+    .no-scrollbar::-webkit-scrollbar { display: none; }
+    .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    /* Saved flash */
+    @keyframes savedFlash { 0% { background-color: rgba(34,197,94,0.25);} 100% { background-color: transparent;} }
+    .saved-flash { animation: savedFlash 0.6s ease-out; }
+  </style>
+</head>
+<body class="bg-ink text-zinc-100 font-sans min-h-screen antialiased">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-30 bg-ink/95 backdrop-blur border-b border-edge" style="padding-top: env(safe-area-inset-top);">
+    <div class="max-w-2xl mx-auto px-4 pt-3 pb-2">
+      <div class="flex items-center justify-between gap-x-3 gap-y-2 flex-wrap">
+        <div class="flex items-center gap-2">
+          <span class="text-ember text-2xl leading-none">&#128293;</span>
+          <div>
+            <h1 class="text-lg font-extrabold tracking-tight leading-none">HIT LOG BOOK</h1>
+            <p class="text-[11px] text-zinc-500 leading-none mt-0.5">Train hard. Log everything. Progress.</p>
+          </div>
+        </div>
+        <!-- Week selector -->
+        <div class="flex items-center gap-2">
+          <a href="nutrition.html" class="flex-shrink-0 text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">&#127869; Nutrition</a>
+          <button id="prevWeekBtn" class="w-8 h-8 rounded-lg bg-panel2 border border-edge text-zinc-300 active:bg-edge text-lg leading-none" aria-label="Previous week">&#8249;</button>
+          <select id="weekSelect" class="bg-panel2 border border-edge rounded-lg px-3 py-1.5 text-sm font-semibold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60"></select>
+          <button id="nextWeekBtn" class="w-8 h-8 rounded-lg bg-panel2 border border-edge text-zinc-300 active:bg-edge text-lg leading-none" aria-label="Next week">&#8250;</button>
+        </div>
+      </div>
+
+      <!-- Day tabs -->
+      <nav id="dayTabs" class="mt-3 flex gap-2 overflow-x-auto no-scrollbar pb-1"></nav>
+    </div>
+  </header>
+
+  <!-- Main -->
+  <main id="dayContainer" class="max-w-2xl mx-auto px-4 py-4 pb-28"></main>
+
+  <!-- Footer actions -->
+  <footer class="fixed bottom-0 inset-x-0 z-30 bg-ink/95 backdrop-blur border-t border-edge" style="padding-bottom: env(safe-area-inset-bottom);">
+    <div class="max-w-2xl mx-auto px-4 py-2.5 flex items-center gap-2">
+      <div id="autosaveNote" class="text-[11px] text-zinc-500 flex-1">All changes save automatically.</div>
+      <button id="exportBtn" class="text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Export</button>
+      <button id="importBtn" class="text-xs font-semibold px-3 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Import</button>
+    </div>
+  </footer>
+
+  <input type="file" id="importFile" accept="application/json" class="hidden" />
+
+  <script>
+  /* ============================================================
+     HIT LOG BOOK — vanilla JS, localStorage-backed SPA
+     ============================================================ */
+
+  // ---- Workout template (the 4-day split) -------------------
+  // heavy: true -> show the HIT "push to true failure" ember cue.
+  const SPLIT = [
+    {
+      id: 'upperA', day: 'Mon', name: 'Upper A',
+      exercises: [
+        { name: 'Barbell Bench Press',     reps: '6-8',     heavy: true  },
+        { name: 'Barbell Pendlay Row',     reps: '6-8',     heavy: false },
+        { name: 'Overhead Barbell Press',  reps: '6-8',     heavy: false },
+        { name: 'Weighted Pull-Ups',       reps: '6-8',     heavy: false },
+        { name: 'Incline DB Flyes',        reps: '8-10',    heavy: false },
+        { name: 'Barbell Bicep Curls',     reps: '6-8',     heavy: false },
+        { name: 'Skull Crushers',          reps: '6-8',     heavy: false },
+      ],
+    },
+    {
+      id: 'lowerA', day: 'Tue', name: 'Lower A',
+      exercises: [
+        { name: 'Barbell Back Squat',          reps: '6-8',     heavy: true  },
+        { name: 'Romanian Deadlifts',          reps: '6-8',     heavy: true  },
+        { name: 'Heavy Leg Press',             reps: '6-8',     heavy: false },
+        { name: 'Seated/Lying Leg Curls',      reps: '8-10',    heavy: false },
+        { name: 'Standing Calf Raises',        reps: '8-10',    heavy: false },
+        { name: 'Hanging Leg/Knee Raises',     reps: 'Failure', heavy: false },
+      ],
+    },
+    {
+      id: 'upperB', day: 'Thu', name: 'Upper B',
+      exercises: [
+        { name: 'Incline DB Bench Press',          reps: '6-8',   heavy: false },
+        { name: 'Single-Arm DB Row',               reps: '6-8',   heavy: false },
+        { name: 'Seated Cable Row',                reps: '6-8',   heavy: false },
+        { name: 'DB Lateral Raises',               reps: '10-12', heavy: false },
+        { name: 'Incline DB Bicep Curls',          reps: '6-8',   heavy: false },
+        { name: 'Overhead Cable Tricep Extension', reps: '6-8',   heavy: false },
+      ],
+    },
+    {
+      id: 'lowerB', day: 'Fri', name: 'Lower B',
+      exercises: [
+        { name: 'Barbell Deadlift',        reps: '5-6',   heavy: true  },
+        { name: 'Bulgarian Split Squat',   reps: '6-8',   heavy: false },
+        { name: 'Leg Extensions',          reps: '8-10',  heavy: false },
+        { name: 'Seated Calf Raises',      reps: '10-12', heavy: false },
+        { name: 'Cable Crunches',          reps: '10-12', heavy: false },
+      ],
+    },
+  ];
+
+  const SETS_PER_EXERCISE = 2;
+  const STORAGE_KEY = 'hitLogBook.v1';
+  const MAX_WEEKS = 52;
+
+  // ---- State -------------------------------------------------
+  // store shape:
+  // { weeks: { "1": { "upperA": { sets: { "0": {w,r}, ... }, notes: "" } } },
+  //   meta: { weekCount, currentWeek, currentDay } }
+  let store = loadStore();
+
+  function loadStore() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          parsed.weeks = parsed.weeks || {};
+          parsed.meta = parsed.meta || {};
+          parsed.meta.weekCount = parsed.meta.weekCount || 4;
+          parsed.meta.currentWeek = parsed.meta.currentWeek || 1;
+          parsed.meta.currentDay = parsed.meta.currentDay || SPLIT[0].id;
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn('Could not parse saved data, starting fresh.', e);
+    }
+    return { weeks: {}, meta: { weekCount: 4, currentWeek: 1, currentDay: SPLIT[0].id } };
+  }
+
+  function saveStore() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
+    } catch (e) {
+      console.error('Save failed', e);
+    }
+  }
+
+  // Ensure a nested record exists and return it.
+  function getDayRecord(week, dayId, create) {
+    const wk = String(week);
+    if (!store.weeks[wk]) {
+      if (!create) return null;
+      store.weeks[wk] = {};
+    }
+    if (!store.weeks[wk][dayId]) {
+      if (!create) return null;
+      store.weeks[wk][dayId] = { sets: {}, notes: '' };
+    }
+    return store.weeks[wk][dayId];
+  }
+
+  // Get the saved value for a specific set field.
+  function getSet(week, dayId, exIdx, setIdx) {
+    const rec = getDayRecord(week, dayId, false);
+    if (!rec || !rec.sets) return { w: '', r: '' };
+    const key = exIdx + '-' + setIdx;
+    return rec.sets[key] || { w: '', r: '' };
+  }
+
+  function setSetValue(week, dayId, exIdx, setIdx, field, value) {
+    const rec = getDayRecord(week, dayId, true);
+    const key = exIdx + '-' + setIdx;
+    if (!rec.sets[key]) rec.sets[key] = { w: '', r: '' };
+    rec.sets[key][field] = value;
+    saveStore();
+  }
+
+  function getNotes(week, dayId) {
+    const rec = getDayRecord(week, dayId, false);
+    return rec ? (rec.notes || '') : '';
+  }
+
+  function setNotes(week, dayId, value) {
+    const rec = getDayRecord(week, dayId, true);
+    rec.notes = value;
+    saveStore();
+  }
+
+  // ---- Rendering ---------------------------------------------
+  const weekSelect = document.getElementById('weekSelect');
+  const dayTabs = document.getElementById('dayTabs');
+  const dayContainer = document.getElementById('dayContainer');
+
+  function renderWeekSelect() {
+    weekSelect.innerHTML = '';
+    for (let i = 1; i <= store.meta.weekCount; i++) {
+      const opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = 'Week ' + i;
+      weekSelect.appendChild(opt);
+    }
+    // "Add week" pseudo-option
+    const addOpt = document.createElement('option');
+    addOpt.value = '__add__';
+    addOpt.textContent = '+ Add week';
+    weekSelect.appendChild(addOpt);
+    weekSelect.value = store.meta.currentWeek;
+  }
+
+  function renderDayTabs() {
+    dayTabs.innerHTML = '';
+    SPLIT.forEach(day => {
+      const active = day.id === store.meta.currentDay;
+      const btn = document.createElement('button');
+      btn.className =
+        'flex-shrink-0 px-3.5 py-2 rounded-xl text-sm font-bold border transition-colors ' +
+        (active
+          ? 'bg-ember text-white border-ember shadow-lg shadow-ember/20'
+          : 'bg-panel2 text-zinc-300 border-edge active:bg-edge');
+      btn.innerHTML =
+        '<span class="block text-[10px] font-semibold uppercase tracking-wide ' +
+        (active ? 'text-red-100' : 'text-zinc-500') + '">' + day.day + '</span>' +
+        '<span class="block leading-tight">' + day.name + '</span>';
+      btn.addEventListener('click', () => {
+        store.meta.currentDay = day.id;
+        saveStore();
+        renderDayTabs();
+        renderDay();
+      });
+      dayTabs.appendChild(btn);
+    });
+  }
+
+  function emberBadge() {
+    return (
+      '<span class="inline-flex items-center gap-1 ml-2 px-1.5 py-0.5 rounded-md bg-emberDim/40 border border-ember/40 align-middle">' +
+        '<span class="text-ember text-sm leading-none ember-pulse">&#128293;</span>' +
+        '<span class="text-[9px] font-bold uppercase tracking-wider text-ember">To failure</span>' +
+      '</span>'
+    );
+  }
+
+  // Build the "Previous / Target" line from last week's matching session.
+  function prevLabel(week, dayId, exIdx) {
+    if (week <= 1) {
+      return '<span class="text-zinc-600">Week 1 &middot; no prior data &mdash; set your baseline</span>';
+    }
+    const prevWeek = week - 1;
+    const s1 = getSet(prevWeek, dayId, exIdx, 0);
+    const s2 = getSet(prevWeek, dayId, exIdx, 1);
+    const has1 = s1.w !== '' || s1.r !== '';
+    const has2 = s2.w !== '' || s2.r !== '';
+    if (!has1 && !has2) {
+      return '<span class="text-zinc-600">No Week ' + prevWeek + ' data logged</span>';
+    }
+    const fmt = (s) => {
+      const w = s.w !== '' ? s.w + 'kg' : '&ndash;';
+      const r = s.r !== '' ? s.r + ' reps' : '&ndash;';
+      return w + ' &times; ' + r;
+    };
+    return (
+      '<span class="text-zinc-500 font-semibold uppercase text-[10px] tracking-wider mr-1">Wk ' + prevWeek + ' target</span>' +
+      '<span class="text-emerald-400 font-bold">S1 ' + fmt(s1) + '</span>' +
+      '<span class="text-zinc-600 mx-1.5">|</span>' +
+      '<span class="text-emerald-400 font-bold">S2 ' + fmt(s2) + '</span>'
+    );
+  }
+
+  function renderDay() {
+    const week = store.meta.currentWeek;
+    const day = SPLIT.find(d => d.id === store.meta.currentDay) || SPLIT[0];
+    dayContainer.innerHTML = '';
+
+    // Day heading
+    const head = document.createElement('div');
+    head.className = 'mb-4 flex items-end justify-between';
+    head.innerHTML =
+      '<div>' +
+        '<div class="text-[11px] font-bold uppercase tracking-widest text-ember">' + day.day + ' &middot; Week ' + week + '</div>' +
+        '<h2 class="text-2xl font-extrabold tracking-tight">' + day.name + '</h2>' +
+      '</div>' +
+      '<div class="text-right text-[11px] text-zinc-500 leading-tight">' +
+        '<div>2 working sets</div><div>per exercise</div>' +
+      '</div>';
+    dayContainer.appendChild(head);
+
+    // Exercise cards
+    day.exercises.forEach((ex, exIdx) => {
+      const card = document.createElement('section');
+      card.className = 'mb-3 rounded-2xl bg-panel border ' +
+        (ex.heavy ? 'border-ember/30' : 'border-edge') + ' overflow-hidden';
+
+      // Card header
+      const header = document.createElement('div');
+      header.className = 'px-4 pt-3 pb-2 ' + (ex.heavy ? 'bg-emberDim/10' : '');
+      header.innerHTML =
+        '<div class="flex items-center justify-between gap-2">' +
+          '<h3 class="font-bold text-[15px] leading-tight">' + ex.name +
+            (ex.heavy ? emberBadge() : '') + '</h3>' +
+          '<span class="flex-shrink-0 text-[11px] font-bold px-2 py-1 rounded-lg bg-panel2 border border-edge text-zinc-300">' +
+            ex.reps + (ex.reps === 'Failure' ? '' : ' reps') + '</span>' +
+        '</div>' +
+        '<div class="mt-1.5 text-[11px]">' + prevLabel(week, day.id, exIdx) + '</div>';
+      card.appendChild(header);
+
+      // Sets grid
+      const body = document.createElement('div');
+      body.className = 'px-4 pb-3 pt-1 space-y-2';
+      for (let setIdx = 0; setIdx < SETS_PER_EXERCISE; setIdx++) {
+        const saved = getSet(week, day.id, exIdx, setIdx);
+        const row = document.createElement('div');
+        row.className = 'flex items-center gap-2';
+        row.innerHTML =
+          '<span class="w-9 flex-shrink-0 text-[11px] font-bold text-zinc-500 uppercase">Set ' + (setIdx + 1) + '</span>' +
+          '<div class="flex-1 relative">' +
+            '<input type="number" inputmode="decimal" step="0.5" min="0" placeholder="0" ' +
+              'data-field="w" data-ex="' + exIdx + '" data-set="' + setIdx + '" ' +
+              'value="' + (saved.w !== '' ? saved.w : '') + '" ' +
+              'class="set-input w-full bg-panel2 border border-edge rounded-xl pl-3 pr-9 py-2.5 text-base font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60 focus:border-ember/60" />' +
+            '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">kg</span>' +
+          '</div>' +
+          '<div class="flex-1 relative">' +
+            '<input type="number" inputmode="numeric" step="1" min="0" placeholder="0" ' +
+              'data-field="r" data-ex="' + exIdx + '" data-set="' + setIdx + '" ' +
+              'value="' + (saved.r !== '' ? saved.r : '') + '" ' +
+              'class="set-input w-full bg-panel2 border border-edge rounded-xl pl-3 pr-12 py-2.5 text-base font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60 focus:border-ember/60" />' +
+            '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">reps</span>' +
+          '</div>';
+        body.appendChild(row);
+      }
+      card.appendChild(body);
+      dayContainer.appendChild(card);
+    });
+
+    // Wire up inputs (event delegation on container would also work)
+    dayContainer.querySelectorAll('.set-input').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const el = e.target;
+        setSetValue(week, day.id, +el.dataset.ex, +el.dataset.set, el.dataset.field, el.value);
+        el.classList.remove('saved-flash');
+        void el.offsetWidth; // reflow to restart animation
+        el.classList.add('saved-flash');
+      });
+    });
+
+    // Session notes
+    const notesWrap = document.createElement('section');
+    notesWrap.className = 'mt-5 rounded-2xl bg-panel border border-edge p-4';
+    notesWrap.innerHTML =
+      '<div class="flex items-center gap-2 mb-2">' +
+        '<span class="text-lg leading-none">&#128221;</span>' +
+        '<h3 class="font-bold text-[15px]">Session Notes</h3>' +
+        '<span class="text-[11px] text-zinc-500">sleep &middot; energy &middot; recovery</span>' +
+      '</div>' +
+      '<textarea id="notesArea" rows="4" placeholder="e.g. 7h sleep, high energy, left knee a little stiff on squats..." ' +
+        'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm text-zinc-100 placeholder-zinc-600 resize-y focus:outline-none focus:ring-2 focus:ring-ember/60 focus:border-ember/60"></textarea>';
+    dayContainer.appendChild(notesWrap);
+
+    const notesArea = document.getElementById('notesArea');
+    notesArea.value = getNotes(week, day.id);
+    notesArea.addEventListener('input', (e) => setNotes(week, day.id, e.target.value));
+
+    // Manage-weeks helper
+    const manage = document.createElement('div');
+    manage.className = 'mt-6 flex items-center justify-center gap-3';
+    manage.innerHTML =
+      '<button id="addWeekBtn2" class="text-xs font-semibold px-4 py-2 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">+ Start next week</button>' +
+      '<button id="clearDayBtn" class="text-xs font-semibold px-4 py-2 rounded-lg bg-panel2 border border-emberDim/50 text-ember/90 active:bg-edge">Clear this session</button>';
+    dayContainer.appendChild(manage);
+
+    document.getElementById('addWeekBtn2').addEventListener('click', addWeek);
+    document.getElementById('clearDayBtn').addEventListener('click', () => {
+      if (confirm('Clear all logged sets and notes for ' + day.name + ', Week ' + week + '?')) {
+        const wk = String(week);
+        if (store.weeks[wk]) { delete store.weeks[wk][day.id]; saveStore(); }
+        renderDay();
+      }
+    });
+  }
+
+  // ---- Week management ---------------------------------------
+  function addWeek() {
+    if (store.meta.weekCount >= MAX_WEEKS) {
+      alert('Maximum of ' + MAX_WEEKS + ' weeks reached.');
+      return;
+    }
+    store.meta.weekCount += 1;
+    store.meta.currentWeek = store.meta.weekCount;
+    saveStore();
+    renderWeekSelect();
+    renderDay();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function goToWeek(week) {
+    week = Math.max(1, Math.min(store.meta.weekCount, week));
+    store.meta.currentWeek = week;
+    saveStore();
+    renderWeekSelect();
+    renderDay();
+  }
+
+  // ---- Wire up global controls -------------------------------
+  weekSelect.addEventListener('change', (e) => {
+    if (e.target.value === '__add__') { addWeek(); return; }
+    goToWeek(parseInt(e.target.value, 10));
+  });
+  document.getElementById('prevWeekBtn').addEventListener('click', () => goToWeek(store.meta.currentWeek - 1));
+  document.getElementById('nextWeekBtn').addEventListener('click', () => goToWeek(store.meta.currentWeek + 1));
+
+  // Export / Import (backup since localStorage is device-bound)
+  document.getElementById('exportBtn').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(store, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'hit-logbook-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+  const importFile = document.getElementById('importFile');
+  document.getElementById('importBtn').addEventListener('click', () => importFile.click());
+  importFile.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        if (!data || typeof data !== 'object' || !data.weeks) throw new Error('Invalid file');
+        if (!confirm('Importing will replace all current data on this device. Continue?')) return;
+        store = data;
+        store.meta = store.meta || {};
+        store.meta.weekCount = store.meta.weekCount || Object.keys(store.weeks).length || 4;
+        store.meta.currentWeek = store.meta.currentWeek || 1;
+        store.meta.currentDay = store.meta.currentDay || SPLIT[0].id;
+        saveStore();
+        init();
+        alert('Data imported.');
+      } catch (err) {
+        alert('Could not import: ' + err.message);
+      } finally {
+        importFile.value = '';
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // ---- Boot --------------------------------------------------
+  function init() {
+    renderWeekSelect();
+    renderDayTabs();
+    renderDay();
+  }
+  init();
+  </script>
+</body>
+</html>
