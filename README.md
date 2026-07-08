@@ -37,9 +37,24 @@ logs persist between visits with no server or account required.
 A flat, chronological daily food log with three views — **Log**, **Foods**,
 **Targets** — designed to sit alongside the training log book.
 
+- **Describe a meal (automatic macros)** — type a meal in plain English
+  ("2 mince beef patties and one sweet potato") and the app parses
+  quantities and food names — tolerating plurals and misspellings — and
+  pulls calories and macros automatically. Review each matched item,
+  adjust quantities or swap matches, then log the whole meal in one tap.
+- **Built-in food database** — ~230 common whole foods (meats, fish,
+  eggs, dairy, grains, potatoes, legumes, vegetables, fruit, nuts,
+  sauces, supplements) embedded in the app with per-100 g macros and
+  typical serving sizes. Fully offline, no API or signup.
+- **Saved meals** — save a reviewed meal under a name and re-log the
+  whole thing in one tap later, with optional scaling (e.g. 2× the
+  meal). Meals snapshot their macros, so later edits to your food
+  library never rewrite them.
 - **Personal food library** — save a food once (per-100 g or per-serving
   macros); after that, logging is two taps: pick it, enter grams or
-  servings. One-off "Quick add" entries cover foods not worth saving.
+  servings. Your saved foods take priority over the built-in database
+  when a meal description matches both. One-off "Quick add" entries
+  cover foods not worth saving.
   Kcal auto-fills from macros (4 / 4 / 9) but can be typed over to match
   a label. Entries snapshot their macros, so editing or deleting a
   library food never rewrites logged history.

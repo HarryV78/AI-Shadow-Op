@@ -120,10 +120,435 @@
   function num(v) { const n = parseFloat(v); return isFinite(n) ? n : 0; }
   function kcalFromMacros(p, c, f) { return 4 * p + 4 * c + 9 * f; }
   function fmt(n) { return String(Math.round(n * 10) / 10); }
+  function r1(n) { return Math.round(n * 10) / 10; }
   function fmtKcal(n) { return Math.round(n).toLocaleString(); }
   function esc(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
       .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  // ---- Built-in food database --------------------------------
+  // { n: name, a: [aliases], kcal/p/c/f: per 100 g, sg: typical serving grams, sl: serving label }
+  // Aliases are synonyms/phrasings only — plurals & misspellings are the matcher's job.
+  const BUILTIN_FOODS = [
+    // Beef
+    { n:'Beef mince (5% fat), cooked', a:['lean mince','lean beef mince','extra lean mince','5% mince'], kcal:174, p:27, c:0, f:6.5, sg:125, sl:'1 serving (125 g)' },
+    { n:'Beef mince (10% fat), cooked', a:['10% mince'], kcal:217, p:26, c:0, f:11.8, sg:125, sl:'1 serving (125 g)' },
+    { n:'Beef mince (15% fat), cooked', a:['beef mince','mince','minced beef','ground beef'], kcal:254, p:25.2, c:0, f:16.2, sg:125, sl:'1 serving (125 g)' },
+    { n:'Beef patty (20% fat mince), grilled', a:['beef patty','mince patty','hamburger patty','burger patty','beef burger','mince beef patty'], kcal:272, p:25.8, c:0, f:18.2, sg:113, sl:'1 patty (113 g)' },
+    { n:'Lean beef patty (10% fat), grilled', a:['lean patty','lean beef burger','lean burger patty'], kcal:217, p:26, c:0, f:11.8, sg:113, sl:'1 patty (113 g)' },
+    { n:'Ribeye steak, grilled', a:['rib eye','scotch fillet'], kcal:291, p:24, c:0, f:21.8, sg:225, sl:'1 steak (225 g)' },
+    { n:'Sirloin steak, grilled', a:['steak','porterhouse steak','new york strip'], kcal:206, p:29, c:0, f:9.6, sg:225, sl:'1 steak (225 g)' },
+    { n:'Rump steak, grilled', a:[], kcal:200, p:29.5, c:0, f:8.9, sg:200, sl:'1 steak (200 g)' },
+    { n:'Fillet steak (tenderloin), grilled', a:['eye fillet','tenderloin','filet mignon'], kcal:218, p:26, c:0, f:12, sg:180, sl:'1 steak (180 g)' },
+    { n:'Roast beef, lean', a:['beef roast'], kcal:190, p:29, c:0, f:7.6, sg:150, sl:'1 serving (150 g)' },
+    { n:'Beef jerky', a:['biltong'], kcal:410, p:33.2, c:11, f:25.6, sg:30, sl:'1 pack (30 g)' },
+    { n:'Corned beef', a:['silverside'], kcal:251, p:18.2, c:0.5, f:19, sg:100, sl:'1 serving (100 g)' },
+    // Poultry
+    { n:'Chicken breast, cooked', a:['chicken','chicken fillet','grilled chicken','chicken breast fillet'], kcal:165, p:31, c:0, f:3.6, sg:150, sl:'1 breast (150 g)' },
+    { n:'Chicken thigh (skinless), cooked', a:['chicken thigh fillet'], kcal:209, p:26, c:0, f:10.9, sg:120, sl:'1 thigh (120 g)' },
+    { n:'Chicken wing, cooked', a:['chicken wings'], kcal:290, p:27, c:0, f:19.5, sg:34, sl:'1 wing (34 g)' },
+    { n:'Chicken drumstick, cooked', a:[], kcal:216, p:27, c:0, f:11.7, sg:100, sl:'1 drumstick (100 g)' },
+    { n:'Roast chicken (meat + skin)', a:['whole chicken','rotisserie chicken'], kcal:239, p:27.3, c:0, f:13.6, sg:150, sl:'1 serving (150 g)' },
+    { n:'Chicken mince, cooked', a:['ground chicken'], kcal:189, p:27, c:0, f:8.1, sg:125, sl:'1 serving (125 g)' },
+    { n:'Turkey breast, cooked', a:['turkey'], kcal:147, p:30.1, c:0, f:2.1, sg:150, sl:'1 serving (150 g)' },
+    { n:'Turkey mince, cooked', a:['ground turkey'], kcal:203, p:27.4, c:0, f:9.7, sg:125, sl:'1 serving (125 g)' },
+    { n:'Duck breast, cooked', a:[], kcal:202, p:23.5, c:0, f:11.2, sg:150, sl:'1 breast (150 g)' },
+    // Pork & lamb
+    { n:'Pork chop, grilled', a:[], kcal:231, p:29, c:0, f:12.2, sg:180, sl:'1 chop (180 g)' },
+    { n:'Pork tenderloin, cooked', a:['pork fillet','pork loin'], kcal:143, p:26, c:0, f:3.5, sg:150, sl:'1 serving (150 g)' },
+    { n:'Pork mince, cooked', a:['ground pork'], kcal:297, p:25.7, c:0, f:20.8, sg:125, sl:'1 serving (125 g)' },
+    { n:'Pork belly, roasted', a:[], kcal:518, p:9.3, c:0, f:53, sg:100, sl:'1 serving (100 g)' },
+    { n:'Bacon, grilled', a:['bacon rasher','streaky bacon'], kcal:468, p:34.5, c:1.4, f:35, sg:25, sl:'2 rashers (25 g)' },
+    { n:'Ham, sliced', a:['leg ham','deli ham'], kcal:107, p:16.9, c:1.1, f:3.4, sg:30, sl:'2 slices (30 g)' },
+    { n:'Pork sausage, grilled', a:['sausage','snag','banger'], kcal:301, p:17, c:2.5, f:24.5, sg:60, sl:'1 sausage (60 g)' },
+    { n:'Chorizo', a:[], kcal:455, p:24.1, c:1.9, f:38.3, sg:50, sl:'1 serving (50 g)' },
+    { n:'Salami', a:['pepperoni'], kcal:336, p:21.7, c:1.2, f:26.4, sg:30, sl:'5 slices (30 g)' },
+    { n:'Lamb chop, grilled', a:['lamb cutlet'], kcal:294, p:25, c:0, f:21, sg:100, sl:'1 chop (100 g)' },
+    { n:'Lamb mince, cooked', a:['ground lamb'], kcal:283, p:24.5, c:0, f:20.1, sg:125, sl:'1 serving (125 g)' },
+    { n:'Lamb leg roast, lean', a:['roast lamb'], kcal:191, p:28.6, c:0, f:8.1, sg:150, sl:'1 serving (150 g)' },
+    // Fish & seafood
+    { n:'Salmon, cooked', a:['salmon fillet','grilled salmon'], kcal:206, p:22.1, c:0, f:12.4, sg:154, sl:'1 fillet (154 g)' },
+    { n:'Smoked salmon', a:['lox'], kcal:117, p:18.3, c:0, f:4.3, sg:50, sl:'2 slices (50 g)' },
+    { n:'Tuna, canned in water (drained)', a:['canned tuna','tinned tuna','tuna can','tuna'], kcal:116, p:25.5, c:0, f:0.8, sg:100, sl:'1 small can (100 g)' },
+    { n:'Tuna steak, cooked', a:[], kcal:132, p:28, c:0, f:1.3, sg:150, sl:'1 steak (150 g)' },
+    { n:'Cod, cooked', a:['white fish'], kcal:105, p:22.8, c:0, f:0.9, sg:150, sl:'1 fillet (150 g)' },
+    { n:'Tilapia, cooked', a:[], kcal:128, p:26.2, c:0, f:2.7, sg:130, sl:'1 fillet (130 g)' },
+    { n:'Haddock, cooked', a:[], kcal:116, p:25.2, c:0, f:0.9, sg:150, sl:'1 fillet (150 g)' },
+    { n:'Sardines, canned in oil (drained)', a:['tinned sardines'], kcal:208, p:24.6, c:0, f:11.5, sg:90, sl:'1 can (90 g)' },
+    { n:'Mackerel, cooked', a:[], kcal:262, p:23.9, c:0, f:17.8, sg:110, sl:'1 fillet (110 g)' },
+    { n:'Prawns, cooked', a:['shrimp','king prawns'], kcal:99, p:24, c:0.2, f:0.3, sg:85, sl:'1 serving (85 g)' },
+    { n:'Mussels, cooked', a:[], kcal:172, p:23.8, c:7.4, f:4.5, sg:85, sl:'1 serving (85 g)' },
+    { n:'Fish, battered & fried', a:['battered fish','fried fish'], kcal:232, p:12.4, c:17, f:12.7, sg:150, sl:'1 fillet (150 g)' },
+    // Eggs & dairy
+    { n:'Egg, large, whole', a:['egg','boiled egg','fried egg','poached egg'], kcal:143, p:12.6, c:0.7, f:9.5, sg:50, sl:'1 large egg (50 g)' },
+    { n:'Egg white', a:['egg whites'], kcal:52, p:10.9, c:0.7, f:0.2, sg:33, sl:'1 egg white (33 g)' },
+    { n:'Scrambled eggs (milk & butter)', a:['scrambled egg'], kcal:149, p:10, c:1.6, f:11.1, sg:120, sl:'2-egg serving (120 g)' },
+    { n:'Omelette, plain', a:['omelet'], kcal:154, p:10.6, c:0.6, f:11.7, sg:120, sl:'2-egg omelette (120 g)' },
+    { n:'Whole milk', a:['milk','full cream milk','full fat milk'], kcal:61, p:3.2, c:4.8, f:3.3, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Semi-skimmed milk (2%)', a:['lite milk','reduced fat milk','semi skimmed milk'], kcal:50, p:3.4, c:4.9, f:2, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Skim milk', a:['skimmed milk','fat free milk','trim milk'], kcal:34, p:3.4, c:5, f:0.1, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Almond milk, unsweetened', a:[], kcal:15, p:0.6, c:0.6, f:1.1, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Oat milk', a:[], kcal:47, p:1, c:7, f:1.5, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Soy milk', a:['soya milk'], kcal:43, p:3.3, c:2.5, f:1.9, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Greek yogurt, plain (full fat)', a:['greek yoghurt'], kcal:97, p:9, c:3.9, f:5, sg:170, sl:'1 tub (170 g)' },
+    { n:'Greek yogurt, 0% fat', a:['fat free greek yogurt','skyr','low fat greek yoghurt'], kcal:59, p:10.3, c:3.6, f:0.4, sg:170, sl:'1 tub (170 g)' },
+    { n:'Natural yogurt', a:['yoghurt','plain yogurt'], kcal:61, p:3.5, c:4.7, f:3.3, sg:170, sl:'1 tub (170 g)' },
+    { n:'Cottage cheese', a:[], kcal:98, p:11.1, c:3.4, f:4.3, sg:113, sl:'half cup (113 g)' },
+    { n:'Cheddar cheese', a:['cheese','tasty cheese'], kcal:403, p:24.9, c:1.3, f:33.1, sg:30, sl:'1 slice (30 g)' },
+    { n:'Mozzarella', a:[], kcal:280, p:27.5, c:3.1, f:17.1, sg:30, sl:'1 serving (30 g)' },
+    { n:'Parmesan', a:['parmigiano'], kcal:431, p:38.5, c:4.1, f:28.6, sg:10, sl:'1 tbsp grated (10 g)' },
+    { n:'Feta', a:['feta cheese'], kcal:264, p:14.2, c:4.1, f:21.3, sg:30, sl:'1 serving (30 g)' },
+    { n:'Halloumi, grilled', a:[], kcal:337, p:22, c:2.2, f:26.9, sg:50, sl:'2 slices (50 g)' },
+    { n:'Cream cheese', a:['philadelphia'], kcal:342, p:5.9, c:5.5, f:34.2, sg:30, sl:'1 tbsp (30 g)' },
+    { n:'Butter', a:[], kcal:717, p:0.9, c:0.1, f:81.1, sg:10, sl:'1 pat (10 g)' },
+    { n:'Heavy cream', a:['double cream','thickened cream','whipping cream'], kcal:340, p:2.8, c:2.7, f:36.1, sg:30, sl:'2 tbsp (30 ml)' },
+    { n:'Ice cream, vanilla', a:['icecream'], kcal:207, p:3.5, c:23.6, f:11, sg:65, sl:'1 scoop (65 g)' },
+    // Grains & cereals
+    { n:'White rice, cooked', a:['rice','basmati rice','jasmine rice','steamed rice'], kcal:130, p:2.7, c:28.2, f:0.3, sg:180, sl:'1 cup cooked (180 g)' },
+    { n:'Brown rice, cooked', a:[], kcal:112, p:2.3, c:23.5, f:0.8, sg:195, sl:'1 cup cooked (195 g)' },
+    { n:'White rice, dry (uncooked)', a:['dry rice','uncooked rice'], kcal:365, p:7.1, c:80, f:0.7, sg:75, sl:'1 dry serving (75 g)' },
+    { n:'Rolled oats, dry', a:['oats','oatmeal','porridge oats'], kcal:379, p:13.2, c:67.7, f:6.5, sg:40, sl:'1 serving dry (40 g)' },
+    { n:'Porridge, made with water', a:['porridge','cooked oats'], kcal:71, p:2.5, c:12, f:1.5, sg:250, sl:'1 bowl (250 g)' },
+    { n:'Bread, white', a:['white bread','bread'], kcal:265, p:9, c:49, f:3.2, sg:30, sl:'1 slice (30 g)' },
+    { n:'Bread, whole wheat', a:['wholemeal bread','brown bread','whole grain bread','toast'], kcal:247, p:13, c:41, f:3.4, sg:40, sl:'1 slice (40 g)' },
+    { n:'Sourdough bread', a:['sourdough'], kcal:240, p:9.6, c:47.5, f:1.8, sg:50, sl:'1 slice (50 g)' },
+    { n:'Bagel, plain', a:['bagel'], kcal:250, p:10, c:49, f:1.5, sg:95, sl:'1 bagel (95 g)' },
+    { n:'English muffin', a:[], kcal:227, p:8.9, c:44.5, f:1.7, sg:57, sl:'1 muffin (57 g)' },
+    { n:'Burger bun', a:['hamburger bun','bread roll','bun'], kcal:279, p:9, c:50, f:4.2, sg:60, sl:'1 bun (60 g)' },
+    { n:'Tortilla wrap, flour', a:['wrap','tortilla','flour tortilla'], kcal:306, p:8.2, c:50, f:7.7, sg:64, sl:'1 large wrap (64 g)' },
+    { n:'Corn tortilla', a:[], kcal:218, p:5.7, c:44.6, f:2.9, sg:26, sl:'1 tortilla (26 g)' },
+    { n:'Pita bread', a:['pita','pitta'], kcal:275, p:9.1, c:55.7, f:1.2, sg:60, sl:'1 pita (60 g)' },
+    { n:'Pasta, cooked', a:['spaghetti','penne','fusilli','macaroni'], kcal:158, p:5.8, c:30.9, f:0.9, sg:180, sl:'1 cup cooked (180 g)' },
+    { n:'Pasta, dry (uncooked)', a:['dry pasta'], kcal:371, p:13, c:74.7, f:1.5, sg:90, sl:'1 dry serving (90 g)' },
+    { n:'Egg noodles, cooked', a:['noodles'], kcal:138, p:4.5, c:25.2, f:2.1, sg:160, sl:'1 cup cooked (160 g)' },
+    { n:'Rice noodles, cooked', a:['vermicelli'], kcal:108, p:0.9, c:24.9, f:0.2, sg:160, sl:'1 cup cooked (160 g)' },
+    { n:'Quinoa, cooked', a:[], kcal:120, p:4.4, c:21.3, f:1.9, sg:185, sl:'1 cup cooked (185 g)' },
+    { n:'Couscous, cooked', a:[], kcal:112, p:3.8, c:23.2, f:0.2, sg:157, sl:'1 cup cooked (157 g)' },
+    { n:'Cornflakes', a:['corn flakes','cereal'], kcal:357, p:7.5, c:84, f:0.4, sg:30, sl:'1 bowl (30 g)' },
+    { n:'Wheat biscuit cereal', a:['weetabix','weetbix','weet-bix'], kcal:355, p:12, c:67, f:2.7, sg:30, sl:'2 biscuits (30 g)' },
+    { n:'Muesli', a:[], kcal:340, p:10, c:60, f:8, sg:45, sl:'half cup (45 g)' },
+    { n:'Granola', a:[], kcal:471, p:10, c:64, f:20, sg:45, sl:'half cup (45 g)' },
+    { n:'Rice cakes', a:['rice cake'], kcal:387, p:8.2, c:81.5, f:2.8, sg:9, sl:'1 rice cake (9 g)' },
+    { n:'Crackers, plain', a:['crackers'], kcal:435, p:9, c:68, f:13, sg:15, sl:'3 crackers (15 g)' },
+    // Potatoes
+    { n:'Potato, boiled', a:['spud','boiled potato'], kcal:87, p:1.9, c:20.1, f:0.1, sg:170, sl:'1 medium (170 g)' },
+    { n:'Potato, baked (with skin)', a:['jacket potato','baked potato'], kcal:93, p:2.5, c:21.2, f:0.1, sg:170, sl:'1 medium (170 g)' },
+    { n:'Mashed potato (milk & butter)', a:['mash','mashed potatoes'], kcal:113, p:2, c:16.8, f:4.2, sg:210, sl:'1 cup (210 g)' },
+    { n:'Roast potatoes', a:['roasted potatoes'], kcal:149, p:2.9, c:25.5, f:4.5, sg:150, sl:'1 serving (150 g)' },
+    { n:'French fries', a:['chips','fries','hot chips'], kcal:312, p:3.4, c:41.4, f:15, sg:117, sl:'1 medium serving (117 g)' },
+    { n:'Sweet potato, baked', a:['kumara'], kcal:90, p:2, c:20.7, f:0.2, sg:130, sl:'1 medium (130 g)' },
+    { n:'Sweet potato fries', a:[], kcal:265, p:2.3, c:33, f:13.6, sg:120, sl:'1 serving (120 g)' },
+    { n:'Hash brown', a:['hashbrown'], kcal:265, p:2.9, c:28.9, f:15.5, sg:55, sl:'1 hash brown (55 g)' },
+    // Legumes & plant protein
+    { n:'Black beans, cooked', a:[], kcal:132, p:8.9, c:23.7, f:0.5, sg:120, sl:'half can (120 g)' },
+    { n:'Kidney beans, cooked', a:['red kidney beans'], kcal:127, p:8.7, c:22.8, f:0.5, sg:120, sl:'half can (120 g)' },
+    { n:'Chickpeas, cooked', a:['garbanzo beans'], kcal:164, p:8.9, c:27.4, f:2.6, sg:120, sl:'half can (120 g)' },
+    { n:'Lentils, cooked', a:[], kcal:116, p:9, c:20.1, f:0.4, sg:120, sl:'half cup (120 g)' },
+    { n:'Baked beans (tomato sauce)', a:['baked beans'], kcal:94, p:4.7, c:15, f:0.5, sg:210, sl:'half can (210 g)' },
+    { n:'Edamame', a:['soy beans'], kcal:121, p:11.9, c:8.9, f:5.2, sg:80, sl:'half cup (80 g)' },
+    { n:'Hummus', a:['houmous','hummous'], kcal:166, p:7.9, c:14.3, f:9.6, sg:30, sl:'2 tbsp (30 g)' },
+    { n:'Tofu, firm', a:[], kcal:76, p:8.1, c:1.9, f:4.8, sg:100, sl:'1 serving (100 g)' },
+    { n:'Tempeh', a:[], kcal:192, p:20.3, c:7.6, f:10.8, sg:100, sl:'1 serving (100 g)' },
+    { n:'Falafel', a:[], kcal:333, p:13.3, c:31.8, f:17.8, sg:51, sl:'3 balls (51 g)' },
+    // Vegetables
+    { n:'Broccoli, cooked', a:[], kcal:35, p:2.4, c:7.2, f:0.4, sg:90, sl:'1 cup (90 g)' },
+    { n:'Cauliflower, cooked', a:[], kcal:25, p:1.9, c:5, f:0.3, sg:100, sl:'1 cup (100 g)' },
+    { n:'Spinach, raw', a:['baby spinach'], kcal:23, p:2.9, c:3.6, f:0.4, sg:30, sl:'1 big handful (30 g)' },
+    { n:'Kale', a:[], kcal:49, p:4.3, c:8.8, f:0.9, sg:65, sl:'1 cup (65 g)' },
+    { n:'Lettuce', a:['iceberg lettuce','cos lettuce','romaine'], kcal:15, p:1.4, c:2.9, f:0.2, sg:50, sl:'1 cup shredded (50 g)' },
+    { n:'Mixed salad greens', a:['salad','garden salad','side salad'], kcal:17, p:1.5, c:3, f:0.2, sg:50, sl:'1 bowl (50 g)' },
+    { n:'Cucumber', a:[], kcal:15, p:0.7, c:3.6, f:0.1, sg:100, sl:'1 cup sliced (100 g)' },
+    { n:'Tomato', a:[], kcal:18, p:0.9, c:3.9, f:0.2, sg:123, sl:'1 medium (123 g)' },
+    { n:'Cherry tomatoes', a:[], kcal:18, p:0.9, c:3.9, f:0.2, sg:75, sl:'5 tomatoes (75 g)' },
+    { n:'Bell pepper', a:['capsicum','red pepper','green pepper'], kcal:31, p:1, c:6, f:0.3, sg:120, sl:'1 medium (120 g)' },
+    { n:'Onion', a:['brown onion','red onion'], kcal:40, p:1.1, c:9.3, f:0.1, sg:110, sl:'1 medium (110 g)' },
+    { n:'Garlic', a:[], kcal:149, p:6.4, c:33.1, f:0.5, sg:3, sl:'1 clove (3 g)' },
+    { n:'Carrot', a:[], kcal:41, p:0.9, c:9.6, f:0.2, sg:61, sl:'1 medium (61 g)' },
+    { n:'Celery', a:[], kcal:14, p:0.7, c:3, f:0.2, sg:40, sl:'1 stalk (40 g)' },
+    { n:'Zucchini', a:['courgette'], kcal:17, p:1.2, c:3.1, f:0.3, sg:120, sl:'1 medium (120 g)' },
+    { n:'Mushrooms', a:['button mushrooms','mushroom'], kcal:22, p:3.1, c:3.3, f:0.3, sg:70, sl:'1 cup sliced (70 g)' },
+    { n:'Asparagus', a:[], kcal:20, p:2.2, c:3.9, f:0.1, sg:90, sl:'6 spears (90 g)' },
+    { n:'Green beans', a:['string beans'], kcal:31, p:1.8, c:7, f:0.2, sg:100, sl:'1 cup (100 g)' },
+    { n:'Peas', a:['green peas'], kcal:81, p:5.4, c:14.5, f:0.4, sg:80, sl:'half cup (80 g)' },
+    { n:'Sweet corn', a:['corn','sweetcorn','corn on the cob'], kcal:86, p:3.3, c:18.7, f:1.4, sg:90, sl:'half cup (90 g)' },
+    { n:'Cabbage', a:[], kcal:25, p:1.3, c:5.8, f:0.1, sg:90, sl:'1 cup (90 g)' },
+    { n:'Brussels sprouts', a:[], kcal:43, p:3.4, c:8.9, f:0.3, sg:90, sl:'5 sprouts (90 g)' },
+    { n:'Beetroot', a:['beets'], kcal:43, p:1.6, c:9.6, f:0.2, sg:85, sl:'1 beet (85 g)' },
+    { n:'Pumpkin, cooked', a:[], kcal:26, p:1, c:6.5, f:0.1, sg:120, sl:'1 cup (120 g)' },
+    { n:'Butternut squash, cooked', a:['squash'], kcal:45, p:1, c:11.7, f:0.1, sg:120, sl:'1 cup (120 g)' },
+    { n:'Eggplant, cooked', a:['aubergine'], kcal:25, p:1, c:5.9, f:0.2, sg:100, sl:'1 cup (100 g)' },
+    { n:'Avocado', a:['avo'], kcal:160, p:2, c:8.5, f:14.7, sg:100, sl:'half avocado (100 g)' },
+    { n:'Olives', a:[], kcal:115, p:0.8, c:6.3, f:10.7, sg:30, sl:'10 olives (30 g)' },
+    { n:'Coleslaw (with mayo)', a:['slaw'], kcal:150, p:1.2, c:8.5, f:12.4, sg:90, sl:'1 serving (90 g)' },
+    // Fruit
+    { n:'Banana', a:[], kcal:89, p:1.1, c:22.8, f:0.3, sg:118, sl:'1 medium (118 g)' },
+    { n:'Apple', a:[], kcal:52, p:0.3, c:13.8, f:0.2, sg:182, sl:'1 medium (182 g)' },
+    { n:'Orange', a:[], kcal:47, p:0.9, c:11.8, f:0.1, sg:131, sl:'1 medium (131 g)' },
+    { n:'Mandarin', a:['clementine','tangerine'], kcal:53, p:0.8, c:13.3, f:0.3, sg:88, sl:'1 mandarin (88 g)' },
+    { n:'Strawberries', a:[], kcal:32, p:0.7, c:7.7, f:0.3, sg:150, sl:'1 cup (150 g)' },
+    { n:'Blueberries', a:[], kcal:57, p:0.7, c:14.5, f:0.3, sg:148, sl:'1 cup (148 g)' },
+    { n:'Raspberries', a:[], kcal:52, p:1.2, c:11.9, f:0.7, sg:123, sl:'1 cup (123 g)' },
+    { n:'Grapes', a:[], kcal:69, p:0.7, c:18.1, f:0.2, sg:92, sl:'1 cup (92 g)' },
+    { n:'Watermelon', a:[], kcal:30, p:0.6, c:7.6, f:0.2, sg:152, sl:'1 cup (152 g)' },
+    { n:'Pineapple', a:[], kcal:50, p:0.5, c:13.1, f:0.1, sg:165, sl:'1 cup (165 g)' },
+    { n:'Mango', a:[], kcal:60, p:0.8, c:15, f:0.4, sg:165, sl:'1 cup (165 g)' },
+    { n:'Kiwifruit', a:['kiwi'], kcal:61, p:1.1, c:14.7, f:0.5, sg:69, sl:'1 kiwi (69 g)' },
+    { n:'Peach', a:['nectarine'], kcal:39, p:0.9, c:9.5, f:0.3, sg:150, sl:'1 medium (150 g)' },
+    { n:'Pear', a:[], kcal:57, p:0.4, c:15.2, f:0.1, sg:178, sl:'1 medium (178 g)' },
+    { n:'Plum', a:[], kcal:46, p:0.7, c:11.4, f:0.3, sg:66, sl:'1 plum (66 g)' },
+    { n:'Cherries', a:[], kcal:63, p:1.1, c:16, f:0.2, sg:138, sl:'1 cup (138 g)' },
+    { n:'Dates', a:['medjool dates'], kcal:282, p:2.5, c:75, f:0.4, sg:24, sl:'3 dates (24 g)' },
+    { n:'Raisins', a:['sultanas'], kcal:299, p:3.1, c:79.2, f:0.5, sg:30, sl:'small box (30 g)' },
+    { n:'Dried apricots', a:[], kcal:241, p:3.4, c:62.6, f:0.5, sg:40, sl:'5 apricots (40 g)' },
+    // Nuts & seeds
+    { n:'Almonds', a:[], kcal:579, p:21.2, c:21.6, f:49.9, sg:28, sl:'1 handful (28 g)' },
+    { n:'Walnuts', a:[], kcal:654, p:15.2, c:13.7, f:65.2, sg:28, sl:'1 handful (28 g)' },
+    { n:'Cashews', a:[], kcal:553, p:18.2, c:30.2, f:43.9, sg:28, sl:'1 handful (28 g)' },
+    { n:'Peanuts', a:[], kcal:567, p:25.8, c:16.1, f:49.2, sg:28, sl:'1 handful (28 g)' },
+    { n:'Pistachios', a:[], kcal:560, p:20.2, c:27.2, f:45.3, sg:28, sl:'1 handful (28 g)' },
+    { n:'Macadamias', a:['macadamia nuts'], kcal:718, p:7.9, c:13.8, f:75.8, sg:28, sl:'1 handful (28 g)' },
+    { n:'Brazil nuts', a:[], kcal:659, p:14.3, c:11.7, f:67.1, sg:20, sl:'4 nuts (20 g)' },
+    { n:'Mixed nuts', a:[], kcal:607, p:20, c:21, f:54, sg:28, sl:'1 handful (28 g)' },
+    { n:'Peanut butter', a:['pb','peanutbutter'], kcal:588, p:25.1, c:20, f:50, sg:32, sl:'2 tbsp (32 g)' },
+    { n:'Almond butter', a:[], kcal:614, p:21, c:18.8, f:55.5, sg:32, sl:'2 tbsp (32 g)' },
+    { n:'Chia seeds', a:[], kcal:486, p:16.5, c:42.1, f:30.7, sg:12, sl:'1 tbsp (12 g)' },
+    { n:'Flaxseed', a:['linseed','flax seeds'], kcal:534, p:18.3, c:28.9, f:42.2, sg:10, sl:'1 tbsp (10 g)' },
+    { n:'Pumpkin seeds', a:['pepitas'], kcal:559, p:30.2, c:10.7, f:49.1, sg:28, sl:'1 handful (28 g)' },
+    { n:'Sunflower seeds', a:[], kcal:584, p:20.8, c:20, f:51.5, sg:28, sl:'1 handful (28 g)' },
+    { n:'Trail mix', a:['scroggin'], kcal:462, p:13.8, c:44.9, f:29.4, sg:40, sl:'1 handful (40 g)' },
+    // Oils, sauces & condiments
+    { n:'Olive oil', a:['oil','evoo','extra virgin olive oil'], kcal:884, p:0, c:0, f:100, sg:14, sl:'1 tbsp (14 g)' },
+    { n:'Coconut oil', a:[], kcal:892, p:0, c:0, f:99.1, sg:14, sl:'1 tbsp (14 g)' },
+    { n:'Mayonnaise', a:['mayo','aioli'], kcal:680, p:1, c:0.6, f:74.9, sg:14, sl:'1 tbsp (14 g)' },
+    { n:'Ketchup', a:['tomato sauce'], kcal:101, p:1, c:25.8, f:0.1, sg:17, sl:'1 tbsp (17 g)' },
+    { n:'BBQ sauce', a:['barbecue sauce'], kcal:172, p:0.8, c:40.8, f:0.6, sg:17, sl:'1 tbsp (17 g)' },
+    { n:'Mustard', a:[], kcal:66, p:4.4, c:5.8, f:3.3, sg:10, sl:'1 tsp (10 g)' },
+    { n:'Soy sauce', a:[], kcal:53, p:8.1, c:4.9, f:0.6, sg:16, sl:'1 tbsp (16 ml)' },
+    { n:'Hot sauce', a:['sriracha','chilli sauce'], kcal:93, p:1.9, c:19.2, f:0.9, sg:10, sl:'2 tsp (10 g)' },
+    { n:'Sweet chilli sauce', a:[], kcal:233, p:0.3, c:55, f:0.4, sg:20, sl:'1 tbsp (20 g)' },
+    { n:'Honey', a:[], kcal:304, p:0.3, c:82.4, f:0, sg:21, sl:'1 tbsp (21 g)' },
+    { n:'Maple syrup', a:[], kcal:260, p:0, c:67, f:0.1, sg:20, sl:'1 tbsp (20 g)' },
+    { n:'Sugar, white', a:['sugar'], kcal:387, p:0, c:100, f:0, sg:4, sl:'1 tsp (4 g)' },
+    { n:'Jam', a:['jelly','marmalade'], kcal:278, p:0.4, c:68.9, f:0.1, sg:20, sl:'1 tbsp (20 g)' },
+    { n:'Chocolate hazelnut spread', a:['nutella','hazelnut spread','chocolate spread'], kcal:539, p:6.3, c:57.5, f:30.9, sg:19, sl:'1 tbsp (19 g)' },
+    { n:'Ranch dressing', a:['ranch','salad dressing'], kcal:430, p:1.3, c:5.9, f:44.5, sg:30, sl:'2 tbsp (30 g)' },
+    { n:'Balsamic vinegar', a:['balsamic'], kcal:88, p:0.5, c:17, f:0, sg:15, sl:'1 tbsp (15 ml)' },
+    { n:'Gravy', a:[], kcal:45, p:2, c:6, f:1.5, sg:60, sl:'quarter cup (60 ml)' },
+    { n:'Pesto', a:['basil pesto'], kcal:458, p:4.7, c:5.7, f:46.6, sg:16, sl:'1 tbsp (16 g)' },
+    { n:'Tomato pasta sauce', a:['marinara','passata','napolitana sauce'], kcal:51, p:1.4, c:8.7, f:1.5, sg:130, sl:'half cup (130 g)' },
+    { n:'Salsa', a:[], kcal:36, p:1.5, c:7, f:0.2, sg:36, sl:'2 tbsp (36 g)' },
+    { n:'Guacamole', a:['guac'], kcal:157, p:2, c:8.5, f:14.3, sg:30, sl:'2 tbsp (30 g)' },
+    { n:'Tzatziki', a:[], kcal:94, p:3.4, c:4.6, f:6.9, sg:30, sl:'2 tbsp (30 g)' },
+    { n:'Coconut milk, canned', a:[], kcal:197, p:2, c:2.8, f:21.3, sg:60, sl:'quarter cup (60 ml)' },
+    // Supplements
+    { n:'Whey protein powder', a:['whey','protein powder','protein shake','whey scoop','wpi','whey protein'], kcal:400, p:80, c:8, f:6, sg:30, sl:'1 scoop (30 g)' },
+    { n:'Casein protein powder', a:['casein'], kcal:373, p:78, c:7, f:3, sg:30, sl:'1 scoop (30 g)' },
+    { n:'Plant protein powder', a:['vegan protein','pea protein'], kcal:393, p:70, c:12, f:7, sg:30, sl:'1 scoop (30 g)' },
+    { n:'Mass gainer', a:['weight gainer'], kcal:388, p:25, c:60, f:5, sg:100, sl:'1 serving (100 g)' },
+    { n:'Protein bar', a:[], kcal:380, p:30, c:35, f:13, sg:60, sl:'1 bar (60 g)' },
+    { n:'Creatine monohydrate', a:['creatine'], kcal:0, p:0, c:0, f:0, sg:5, sl:'1 tsp (5 g)' },
+    // Snacks, takeaway & drinks
+    { n:'Dark chocolate (70-85%)', a:['dark chocolate'], kcal:598, p:7.8, c:45.9, f:42.6, sg:20, sl:'2 squares (20 g)' },
+    { n:'Milk chocolate', a:['chocolate','chocolate bar'], kcal:535, p:7.7, c:59.4, f:29.7, sg:25, sl:'4 squares (25 g)' },
+    { n:'Potato crisps', a:['crisps','potato chips'], kcal:536, p:7, c:52.9, f:34.6, sg:28, sl:'small bag (28 g)' },
+    { n:'Popcorn, air-popped', a:['popcorn'], kcal:387, p:12.9, c:77.8, f:4.5, sg:24, sl:'3 cups popped (24 g)' },
+    { n:'Pretzels', a:[], kcal:380, p:10, c:80, f:3, sg:28, sl:'1 handful (28 g)' },
+    { n:'Granola bar', a:['muesli bar','cereal bar'], kcal:435, p:8, c:64, f:16, sg:35, sl:'1 bar (35 g)' },
+    { n:'Chocolate chip cookie', a:['cookie','biscuit'], kcal:488, p:5.6, c:63.9, f:24, sg:16, sl:'1 cookie (16 g)' },
+    { n:'Croissant', a:[], kcal:406, p:8.2, c:45.8, f:21, sg:57, sl:'1 croissant (57 g)' },
+    { n:'Blueberry muffin', a:['muffin'], kcal:377, p:4.5, c:54, f:16.3, sg:110, sl:'1 muffin (110 g)' },
+    { n:'Glazed donut', a:['donut','doughnut'], kcal:421, p:5.1, c:49.7, f:22.4, sg:60, sl:'1 donut (60 g)' },
+    { n:'Pancake, plain', a:['pancakes'], kcal:227, p:6.4, c:28.3, f:9.7, sg:38, sl:'1 pancake (38 g)' },
+    { n:'Pizza, cheese', a:['pizza slice','pizza'], kcal:266, p:11, c:33, f:9.8, sg:107, sl:'1 slice (107 g)' },
+    { n:'Meat pie', a:['pie'], kcal:268, p:9, c:24, f:15, sg:175, sl:'1 pie (175 g)' },
+    { n:'Sushi roll', a:['sushi'], kcal:150, p:5, c:27, f:2.5, sg:110, sl:'1 roll cut (110 g)' },
+    { n:'Doner kebab (meat, salad & pita)', a:['kebab','doner'], kcal:215, p:12, c:18, f:10, sg:350, sl:'1 kebab (350 g)' },
+    { n:'Fried chicken (battered)', a:['kfc chicken'], kcal:246, p:19, c:12, f:14, sg:140, sl:'1 piece (140 g)' },
+    { n:'Chicken nuggets', a:['nuggets'], kcal:296, p:15, c:16, f:19, sg:96, sl:'6 nuggets (96 g)' },
+    { n:'Cheeseburger (fast food)', a:['cheeseburger'], kcal:263, p:13.9, c:27.4, f:11.1, sg:115, sl:'1 cheeseburger (115 g)' },
+    { n:'Chicken noodle soup', a:['soup'], kcal:36, p:2.5, c:4.5, f:1.1, sg:245, sl:'1 cup (245 g)' },
+    { n:'Beer', a:['lager','pale ale'], kcal:43, p:0.5, c:3.6, f:0, sg:355, sl:'1 can (355 ml)' },
+    { n:'Wine (red or white)', a:['wine','red wine','white wine'], kcal:84, p:0.1, c:2.6, f:0, sg:150, sl:'1 glass (150 ml)' },
+    { n:'Spirits (40%)', a:['vodka','whiskey','gin','rum'], kcal:231, p:0, c:0, f:0, sg:44, sl:'1 shot (44 ml)' },
+    { n:'Soft drink (cola)', a:['coke','soda','cola','lemonade'], kcal:42, p:0, c:10.6, f:0, sg:375, sl:'1 can (375 ml)' },
+    { n:'Orange juice', a:['oj','juice'], kcal:45, p:0.7, c:10.4, f:0.2, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Apple juice', a:[], kcal:46, p:0.1, c:11.3, f:0.1, sg:250, sl:'1 glass (250 ml)' },
+    { n:'Sports drink', a:['gatorade','powerade'], kcal:26, p:0, c:6.5, f:0, sg:600, sl:'1 bottle (600 ml)' },
+    { n:'Energy drink', a:['red bull'], kcal:45, p:0, c:11, f:0, sg:250, sl:'1 can (250 ml)' },
+    { n:'Latte (whole milk)', a:['flat white','cappuccino','coffee with milk'], kcal:42, p:2.2, c:3.3, f:2.2, sg:240, sl:'1 cup (240 ml)' },
+    { n:'Black coffee', a:['coffee','espresso','americano','long black'], kcal:2, p:0.3, c:0, f:0, sg:240, sl:'1 cup (240 ml)' },
+  ];
+
+  // ---- Food matching -----------------------------------------
+  function lev(a, b) {
+    if (a === b) return 0;
+    const m = a.length, n = b.length;
+    if (!m) return n;
+    if (!n) return m;
+    let prev = new Array(n + 1), cur = new Array(n + 1);
+    for (let j = 0; j <= n; j++) prev[j] = j;
+    for (let i = 1; i <= m; i++) {
+      cur[0] = i;
+      for (let j = 1; j <= n; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      const t = prev; prev = cur; cur = t;
+    }
+    return prev[n];
+  }
+
+  function singularize(t) {
+    if (t.length > 3 && t.endsWith('ies')) return t.slice(0, -3) + 'y';
+    if (t.length > 3 && /(?:s|x|z|ch|sh|o)es$/.test(t)) return t.slice(0, -2);
+    if (t.length > 2 && t.endsWith('s') && !t.endsWith('ss')) return t.slice(0, -1);
+    return t;
+  }
+
+  function normTokens(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9%]+/g, ' ')
+      .split(' ').filter(Boolean).map(singularize);
+  }
+
+  function tokenMatch(qt, ct) {
+    if (qt === ct) return true;
+    if (qt.length >= 4 && ct.startsWith(qt)) return true;
+    return lev(qt, ct) <= (qt.length <= 4 ? 1 : 2);
+  }
+
+  function scoreTokens(qTokens, cTokens, isAlias) {
+    if (!qTokens.length || !cTokens.length) return 0;
+    const matched = new Set();
+    let allLiteral = true;
+    for (const qt of qTokens) {
+      let found = cTokens.indexOf(qt);
+      if (found < 0) {
+        allLiteral = false;
+        found = cTokens.findIndex(ct => tokenMatch(qt, ct));
+      }
+      if (found < 0) return 0; // every query token must match something
+      matched.add(found);
+    }
+    let base;
+    if (qTokens.join(' ') === cTokens.join(' ')) base = isAlias ? 95 : 100;
+    else if (allLiteral) base = 80;
+    else base = 60;
+    return base + 15 * (matched.size / cTokens.length);
+  }
+
+  function matchFoods(query) {
+    const qTokens = normTokens(query);
+    if (!qTokens.length) return [];
+    const results = [];
+    store.foods.forEach(f => {
+      const s = scoreTokens(qTokens, normTokens(f.name), false);
+      if (s > 0) results.push({ src: 'user', food: f, score: s + 5 }); // user foods outrank ties
+    });
+    BUILTIN_FOODS.forEach(b => {
+      let best = scoreTokens(qTokens, normTokens(b.n), false);
+      (b.a || []).forEach(al => { best = Math.max(best, scoreTokens(qTokens, normTokens(al), true)); });
+      if (best > 0) results.push({ src: 'builtin', food: b, score: best });
+    });
+    results.sort((x, y) => y.score - x.score);
+    return results.filter(r => r.score >= 55).slice(0, 5);
+  }
+
+  // ---- Meal text parser --------------------------------------
+  const NUM_WORDS = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+    seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, half: 0.5, quarter: 0.25 };
+
+  function splitSegments(text) {
+    return String(text).toLowerCase()
+      .split(/\s*(?:,|\+|&|\band\b|\bwith\b|\bplus\b)\s*/)
+      .map(s => s.trim()).filter(Boolean);
+  }
+
+  // "2 mince beef pattys" -> {qty:2, unit:'count', query:'mince beef pattys'}
+  // "200g rice" / "0.5 kg mince" -> {qty:200|500, unit:'g', query:...}
+  function parseQtyUnit(seg) {
+    let rest = seg.trim();
+    let qty = null, unit = 'count';
+    let m = rest.match(/^(\d+(?:\.\d+)?)(?:\s*\/\s*(\d+))?\s*/);
+    if (m) {
+      qty = num(m[1]);
+      if (m[2]) qty = qty / num(m[2]);
+      rest = rest.slice(m[0].length);
+    } else {
+      m = rest.match(/^([a-z]+)\s+/i);
+      if (m && NUM_WORDS[m[1].toLowerCase()] !== undefined) {
+        qty = NUM_WORDS[m[1].toLowerCase()];
+        rest = rest.slice(m[0].length).replace(/^(?:a|an)\s+/i, ''); // "half an avocado"
+      }
+    }
+    if (qty !== null) {
+      m = rest.match(/^(kg|kilograms?|kilos?|grams?|g)\b\.?\s*/i);
+      if (m) {
+        unit = 'g';
+        if (m[1].toLowerCase()[0] === 'k') qty *= 1000;
+        rest = rest.slice(m[0].length);
+      }
+      rest = rest.replace(/^x\s+/i, '').replace(/^of\s+/i, '');
+    } else {
+      qty = 1;
+    }
+    // trailing weight, e.g. "chicken breast (150g)" or "2 breasts 150g" (grams each)
+    if (unit === 'count') {
+      m = rest.match(/\(?\s*(\d+(?:\.\d+)?)\s*(kg|kilograms?|kilos?|grams?|g)\s*\)?\s*$/i);
+      if (m) {
+        let each = num(m[1]);
+        if (m[2].toLowerCase()[0] === 'k') each *= 1000;
+        qty = qty * each;
+        unit = 'g';
+        rest = rest.slice(0, m.index);
+      }
+    }
+    return { qty: qty, unit: unit, query: rest.trim() };
+  }
+
+  // Prefer a built-in over a user food whose unit doesn't fit the parsed quantity.
+  function pickDefaultCand(item) {
+    if (!item.cands.length) return -1;
+    const top = item.cands[0];
+    const mismatch = c => c.src === 'user' && ((item.unit === 'g') !== (c.food.mode === '100g'));
+    if (mismatch(top)) {
+      const alt = item.cands.findIndex(c => c.src === 'builtin' && c.score >= top.score - 10);
+      if (alt >= 0) return alt;
+    }
+    return 0;
+  }
+
+  // Build an entry-shaped object {name, foodId, mode, servingLabel, qty, base}
+  // from a review item; `check: true` flags a qty the user should eyeball.
+  function buildEntry(item) {
+    const cand = item.selIdx >= 0 ? item.cands[item.selIdx] : null;
+    if (!cand) return null;
+    if (cand.src === 'user') {
+      const f = cand.food;
+      const base = { kcal: num(f.kcal), p: num(f.p), c: num(f.c), f: num(f.f) };
+      if (item.unit === 'g') {
+        if (f.mode === '100g') return { name: f.name, foodId: f.id, mode: '100g', servingLabel: '', qty: item.qty, base: base };
+        return { name: f.name, foodId: f.id, mode: 'serving', servingLabel: f.servingLabel || '', qty: 1, base: base, check: true };
+      }
+      if (f.mode === 'serving') return { name: f.name, foodId: f.id, mode: 'serving', servingLabel: f.servingLabel || '', qty: item.qty, base: base };
+      return { name: f.name, foodId: f.id, mode: '100g', servingLabel: '', qty: item.qty * 100, base: base, check: true };
+    }
+    const b = cand.food;
+    if (item.unit === 'g') {
+      return { name: b.n, foodId: null, mode: '100g', servingLabel: '', qty: item.qty, base: { kcal: b.kcal, p: b.p, c: b.c, f: b.f } };
+    }
+    return { name: b.n, foodId: null, mode: 'serving', servingLabel: b.sl, qty: item.qty,
+      base: { kcal: r1(b.kcal * b.sg / 100), p: r1(b.p * b.sg / 100), c: r1(b.c * b.sg / 100), f: r1(b.f * b.sg / 100) } };
+  }
+
+  function parseMealText(text) {
+    return splitSegments(text).map(seg => {
+      const pq = parseQtyUnit(seg);
+      const item = { raw: seg, qty: pq.qty, unit: pq.unit, query: pq.query,
+        cands: pq.query ? matchFoods(pq.query) : [], selIdx: -1, entry: null, save: false };
+      item.selIdx = pickDefaultCand(item);
+      item.entry = buildEntry(item);
+      return item;
+    });
   }
 
   // ---- State -------------------------------------------------
@@ -151,6 +576,15 @@
   function normalizeStore(s) {
     s.days = s.days || {};
     s.foods = Array.isArray(s.foods) ? s.foods : [];
+    s.meals = Array.isArray(s.meals) ? s.meals.filter(m => m && Array.isArray(m.items)) : [];
+    s.meals.forEach(m => {
+      m.name = String(m.name || 'Meal');
+      m.items.forEach(it => {
+        it.qty = num(it.qty);
+        it.base = it.base || {};
+        ['kcal', 'p', 'c', 'f'].forEach(k => { it.base[k] = num(it.base[k]); });
+      });
+    });
     s.targets = s.targets || {};
     s.targets.kcal = num(s.targets.kcal);
     s.targets.p = num(s.targets.p);
@@ -178,11 +612,19 @@
 
   // Transient UI state (not persisted)
   const ui = {
-    addOpen: false, addMode: 'library', selFoodId: null, libSearch: '',
+    addOpen: false, addMode: 'parse', selFoodId: null, libSearch: '',
+    parse: { text: '', items: null }, saveMealOpen: false, saveMealName: '', savedMealNotice: '',
+    mealsSearch: '',
     qa: { name: '', p: '', c: '', f: '', kcal: '' }, qaKcalTouched: false,
     foodsSearch: '', editFoodId: null,
     foodForm: blankFoodForm(), formKcalTouched: false,
   };
+  function resetParseState() {
+    ui.parse = { text: '', items: null };
+    ui.saveMealOpen = false;
+    ui.saveMealName = '';
+    ui.savedMealNotice = '';
+  }
   function blankFoodForm() {
     return { name: '', mode: '100g', servingLabel: '', p: '', c: '', f: '', kcal: '' };
   }
@@ -304,6 +746,88 @@
       ' &middot; C ' + fmt(food.c) + ' &middot; F ' + fmt(food.f);
   }
 
+  // ---- Meals data layer --------------------------------------
+  function getMeal(id) { return store.meals.find(m => m.id === id) || null; }
+
+  function snapEntry(entry) {
+    return {
+      name: entry.name, foodId: entry.foodId || null, mode: entry.mode,
+      servingLabel: entry.servingLabel || '', qty: num(entry.qty),
+      base: { kcal: num(entry.base.kcal), p: num(entry.base.p), c: num(entry.base.c), f: num(entry.base.f) },
+    };
+  }
+
+  function addMealFromItems(name, items) {
+    const snap = items.filter(it => it.entry && num(it.entry.qty) > 0).map(it => snapEntry(it.entry));
+    if (!snap.length) return false;
+    store.meals.push({ id: nextId(), name: name, items: snap });
+    saveStore();
+    return true;
+  }
+
+  function deleteMeal(id) {
+    store.meals = store.meals.filter(m => m.id !== id);
+    saveStore();
+  }
+
+  function mealTotals(meal) {
+    const t = { kcal: 0, p: 0, c: 0, f: 0 };
+    meal.items.forEach(it => {
+      const e = entryTotals(it);
+      t.kcal += e.kcal; t.p += e.p; t.c += e.c; t.f += e.f;
+    });
+    return t;
+  }
+
+  function logMeal(iso, id, scale) {
+    const meal = getMeal(id);
+    if (!meal) return;
+    const rec = getDayRec(iso, true);
+    meal.items.forEach(it => {
+      const en = snapEntry(it);
+      en.qty = r1(en.qty * scale);
+      en.id = nextId();
+      en.ts = Date.now();
+      rec.entries.push(en);
+    });
+    saveStore();
+  }
+
+  function filterMeals(query) {
+    const q = (query || '').trim().toLowerCase();
+    return store.meals
+      .filter(m => !q || m.name.toLowerCase().includes(q))
+      .slice()
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  // ---- Parse pipeline ----------------------------------------
+  // Save a built-in DB food into the user's library (per-serving), reusing an
+  // existing food with the same normalized name instead of duplicating.
+  function saveBuiltinToFoods(b) {
+    const key = normTokens(b.n).join(' ');
+    const existing = store.foods.find(f => normTokens(f.name).join(' ') === key);
+    if (existing) return existing.id;
+    const food = { id: nextId(), name: b.n, mode: 'serving', servingLabel: b.sl,
+      kcal: r1(b.kcal * b.sg / 100), p: r1(b.p * b.sg / 100), c: r1(b.c * b.sg / 100), f: r1(b.f * b.sg / 100) };
+    store.foods.push(food);
+    return food.id;
+  }
+
+  function logParsedItems(iso, items) {
+    const rec = getDayRec(iso, true);
+    items.forEach(it => {
+      if (!it.entry || num(it.entry.qty) <= 0) return;
+      const en = snapEntry(it.entry);
+      const cand = it.selIdx >= 0 ? it.cands[it.selIdx] : null;
+      if (it.save && cand && cand.src === 'builtin') en.foodId = saveBuiltinToFoods(cand.food);
+      en.id = nextId();
+      en.ts = Date.now();
+      rec.entries.push(en);
+    });
+    saveStore();
+  }
+
   // ---- Target calculator -------------------------------------
   // Bodyweight multipliers (standard bodybuilding practice):
   //   kcal: 33/kg maintain, +300 bulk, -500 cut
@@ -382,6 +906,7 @@
     store.meta.currentView = id;
     ui.addOpen = false;   // close the log's add panel when leaving/re-entering a view
     ui.selFoodId = null;
+    resetParseState();
     saveStore();
     renderAll();
   }
@@ -494,115 +1019,376 @@
 
   function addPanelHTML() {
     if (!ui.addOpen) {
-      return '<button id="addFoodBtn" class="w-full py-3.5 rounded-2xl bg-ember text-white font-extrabold text-base shadow-lg shadow-ember/20 active:bg-red-600">+ Add food</button>';
+      return '<button id="addFoodBtn" class="w-full py-3.5 rounded-2xl bg-ember text-white font-extrabold text-base shadow-lg shadow-ember/20 active:bg-red-600">+ Add food or meal</button>';
     }
     const modeBtn = (mode, label) =>
-      '<button data-mode="' + mode + '" class="add-mode flex-1 px-3 py-2 rounded-xl text-sm font-bold border ' +
+      '<button data-mode="' + mode + '" class="add-mode flex-1 px-1.5 py-2 rounded-xl text-xs font-bold border ' +
       (ui.addMode === mode
         ? 'bg-ember text-white border-ember'
         : 'bg-panel2 text-zinc-300 border-edge active:bg-edge') + '">' + label + '</button>';
 
-    let body = '';
-    if (ui.addMode === 'library') {
-      const sel = ui.selFoodId ? getFood(ui.selFoodId) : null;
-      body =
-        '<input type="text" id="libSearchInput" placeholder="Search your foods..." value="' + esc(ui.libSearch) + '" ' +
-          'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
-        (sel
-          ? '<div class="mb-2 p-3 rounded-xl bg-emberDim/20 border border-ember/40">' +
-              '<div class="text-sm font-bold mb-2">' + esc(sel.name) + ' <span class="text-[11px] text-zinc-500 font-semibold">' + foodUnitLabel(sel) + '</span></div>' +
-              '<div class="flex items-center gap-2">' +
-                '<div class="relative flex-1">' +
-                  '<input type="number" id="libQty" inputmode="decimal" step="0.5" min="0" value="' + (sel.mode === '100g' ? 100 : 1) + '" class="' + INPUT_CLS + ' pr-10" />' +
-                  '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + (sel.mode === '100g' ? 'g' : '&times;') + '</span>' +
-                '</div>' +
-                '<button id="libAddBtn" class="flex-shrink-0 px-5 py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add</button>' +
-              '</div>' +
-            '</div>'
-          : '') +
-        '<div id="libResults" class="max-h-72 overflow-y-auto">' + libResultsHTML() + '</div>';
-    } else {
-      body =
-        '<input type="text" id="qaName" placeholder="Food name" value="' + esc(ui.qa.name) + '" ' +
-          'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
-        '<div class="grid grid-cols-4 gap-2 mb-2">' +
-          ['p', 'c', 'f'].map(k =>
-            '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">' +
-              (k === 'p' ? 'Protein' : k === 'c' ? 'Carbs' : 'Fat') + '</label>' +
-              suffixInput('<input type="number" inputmode="decimal" step="0.1" min="0" placeholder="0" data-qa="' + k + '" value="' + esc(ui.qa[k]) + '" class="qa-macro ' + INPUT_CLS + ' pr-7 text-sm"/>', 'g') +
-            '</div>').join('') +
-          '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">Kcal</label>' +
-            '<input type="number" id="qaKcal" inputmode="decimal" step="1" min="0" placeholder="0" value="' + esc(ui.qa.kcal) + '" class="' + INPUT_CLS + ' text-sm"/></div>' +
-        '</div>' +
-        '<button id="qaAddBtn" class="w-full py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add to log</button>';
-    }
+    let body;
+    if (ui.addMode === 'parse') body = parseModeHTML();
+    else if (ui.addMode === 'library') body = libraryModeHTML();
+    else if (ui.addMode === 'meals') body = mealsModeHTML();
+    else body = quickModeHTML();
 
     return (
       '<div class="rounded-2xl bg-panel border border-edge p-3">' +
-        '<div class="flex items-center gap-2 mb-3">' +
-          modeBtn('library', 'From library') + modeBtn('quick', 'Quick add') +
+        '<div class="flex items-center gap-1.5 mb-3">' +
+          modeBtn('parse', 'Describe') + modeBtn('library', 'Library') + modeBtn('meals', 'Meals') + modeBtn('quick', 'Quick') +
           '<button id="closeAddBtn" class="w-9 h-9 flex-shrink-0 rounded-xl bg-panel2 border border-edge text-zinc-400 text-lg leading-none" aria-label="Close">&times;</button>' +
         '</div>' + body +
       '</div>'
     );
   }
 
+  function libraryModeHTML() {
+    const sel = ui.selFoodId ? getFood(ui.selFoodId) : null;
+    return (
+      '<input type="text" id="libSearchInput" placeholder="Search your foods..." value="' + esc(ui.libSearch) + '" ' +
+        'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
+      (sel
+        ? '<div class="mb-2 p-3 rounded-xl bg-emberDim/20 border border-ember/40">' +
+            '<div class="text-sm font-bold mb-2">' + esc(sel.name) + ' <span class="text-[11px] text-zinc-500 font-semibold">' + foodUnitLabel(sel) + '</span></div>' +
+            '<div class="flex items-center gap-2">' +
+              '<div class="relative flex-1">' +
+                '<input type="number" id="libQty" inputmode="decimal" step="0.5" min="0" value="' + (sel.mode === '100g' ? 100 : 1) + '" class="' + INPUT_CLS + ' pr-10" />' +
+                '<span class="absolute right-3 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + (sel.mode === '100g' ? 'g' : '&times;') + '</span>' +
+              '</div>' +
+              '<button id="libAddBtn" class="flex-shrink-0 px-5 py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add</button>' +
+            '</div>' +
+          '</div>'
+        : '') +
+      '<div id="libResults" class="max-h-72 overflow-y-auto">' + libResultsHTML() + '</div>'
+    );
+  }
+
+  function quickModeHTML() {
+    return (
+      '<input type="text" id="qaName" placeholder="Food name" value="' + esc(ui.qa.name) + '" ' +
+        'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />' +
+      '<div class="grid grid-cols-4 gap-2 mb-2">' +
+        ['p', 'c', 'f'].map(k =>
+          '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">' +
+            (k === 'p' ? 'Protein' : k === 'c' ? 'Carbs' : 'Fat') + '</label>' +
+            suffixInput('<input type="number" inputmode="decimal" step="0.1" min="0" placeholder="0" data-qa="' + k + '" value="' + esc(ui.qa[k]) + '" class="qa-macro ' + INPUT_CLS + ' pr-7 text-sm"/>', 'g') +
+          '</div>').join('') +
+        '<div><label class="block text-[10px] font-bold uppercase tracking-wide text-zinc-500 mb-1">Kcal</label>' +
+          '<input type="number" id="qaKcal" inputmode="decimal" step="1" min="0" placeholder="0" value="' + esc(ui.qa.kcal) + '" class="' + INPUT_CLS + ' text-sm"/></div>' +
+      '</div>' +
+      '<button id="qaAddBtn" class="w-full py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Add to log</button>'
+    );
+  }
+
+  function parseModeHTML() {
+    let html =
+      '<textarea id="parseText" rows="2" placeholder="e.g. 2 beef patties and one sweet potato" ' +
+        'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 resize-y focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2">' + esc(ui.parse.text) + '</textarea>' +
+      '<button id="parseBtn" class="w-full py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Get macros</button>';
+    if (ui.parse.items !== null) html += reviewListHTML();
+    return html;
+  }
+
+  function parseTotalsText() {
+    const t = { kcal: 0, p: 0, c: 0, f: 0 };
+    (ui.parse.items || []).forEach(it => {
+      if (!it.entry) return;
+      const e = entryTotals(it.entry);
+      t.kcal += e.kcal; t.p += e.p; t.c += e.c; t.f += e.f;
+    });
+    return 'Meal total: ' + fmtKcal(t.kcal) + ' kcal &middot; P ' + fmt(t.p) + ' &middot; C ' + fmt(t.c) + ' &middot; F ' + fmt(t.f);
+  }
+
+  function reviewListHTML() {
+    const items = ui.parse.items;
+    if (!items.length) return '<div class="text-center py-3 text-sm text-zinc-500 mt-2">Nothing to parse &mdash; describe your meal above.</div>';
+    let html = '<div class="mt-2.5 space-y-2">';
+    items.forEach((it, i) => {
+      if (it.entry) {
+        const cand = it.cands[it.selIdx];
+        const opts = it.cands.map((c, ci) =>
+          '<option value="' + ci + '"' + (ci === it.selIdx ? ' selected' : '') + '>' +
+          esc(c.src === 'user' ? c.food.name + ' — my foods' : c.food.n) + '</option>').join('') +
+          '<option value="-1">None of these&hellip;</option>';
+        html +=
+          '<div class="rounded-xl bg-panel2 border border-edge p-2.5">' +
+            '<select data-i="' + i + '" class="pi-swap w-full bg-panel border border-edge rounded-lg px-2 py-1.5 text-sm font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-1.5">' + opts + '</select>' +
+            '<div class="flex items-center gap-2">' +
+              '<div class="relative w-24 flex-shrink-0">' +
+                '<input type="number" inputmode="decimal" step="0.5" min="0" value="' + it.entry.qty + '" data-i="' + i + '" ' +
+                  'class="pi-qty w-full bg-panel border border-edge rounded-lg pl-2.5 pr-7 py-1.5 text-sm font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60" />' +
+                '<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">' + (it.entry.mode === '100g' ? 'g' : '&times;') + '</span>' +
+              '</div>' +
+              '<div class="pi-sub flex-1 min-w-0 text-[11px] text-zinc-500 truncate" data-i="' + i + '">' + entrySubText(it.entry) + '</div>' +
+              (cand.src === 'builtin'
+                ? '<button data-i="' + i + '" class="pi-save flex-shrink-0 text-[10px] font-bold px-2 py-1.5 rounded-lg border ' +
+                    (it.save ? 'bg-emerald-600/30 border-emerald-500/60 text-emerald-300' : 'bg-panel border-edge text-zinc-400') + '">' +
+                    (it.save ? '&#10003; My Foods' : '+ My Foods') + '</button>'
+                : '') +
+              '<button data-i="' + i + '" class="pi-del w-8 h-8 flex-shrink-0 rounded-lg bg-panel border border-emberDim/50 text-ember/90 text-base leading-none" aria-label="Remove item">&times;</button>' +
+            '</div>' +
+            (it.entry.check ? '<div class="mt-1 text-[10px] font-semibold text-amber-400">Check the quantity &mdash; the matched food uses a different unit.</div>' : '') +
+          '</div>';
+      } else {
+        html +=
+          '<div class="rounded-xl bg-emberDim/15 border border-emberDim/50 p-2.5 flex items-center gap-2">' +
+            '<div class="flex-1 min-w-0 text-sm text-zinc-400 truncate">No match for &ldquo;<span class="text-zinc-200 font-semibold">' + esc(it.raw) + '</span>&rdquo;</div>' +
+            '<button data-i="' + i + '" class="pi-quick flex-shrink-0 text-[11px] font-bold px-2.5 py-1.5 rounded-lg bg-panel2 border border-edge text-zinc-200 active:bg-edge">Quick add</button>' +
+            '<button data-i="' + i + '" class="pi-del w-8 h-8 flex-shrink-0 rounded-lg bg-panel2 border border-emberDim/50 text-ember/90 text-base leading-none" aria-label="Remove item">&times;</button>' +
+          '</div>';
+      }
+    });
+    html += '</div>';
+    html += '<div id="parseTotals" class="mt-2.5 text-[12px] font-bold text-zinc-300 text-center">' + parseTotalsText() + '</div>';
+    html +=
+      '<div class="mt-2 flex gap-2">' +
+        '<button id="logMealBtn" class="flex-1 py-2.5 rounded-xl bg-ember text-white font-extrabold text-sm active:bg-red-600">Log meal</button>' +
+        '<button id="saveMealBtn" class="px-4 py-2.5 rounded-xl bg-panel2 border border-edge text-sm font-bold text-zinc-300 active:bg-edge">Save as meal</button>' +
+      '</div>';
+    if (ui.saveMealOpen) {
+      html +=
+        '<div class="mt-2 flex gap-2">' +
+          '<input type="text" id="mealName" placeholder="Meal name (e.g. Patties + sweet potato)" value="' + esc(ui.saveMealName) + '" ' +
+            'class="flex-1 min-w-0 bg-panel2 border border-edge rounded-xl px-3 py-2 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60" />' +
+          '<button id="confirmSaveMeal" class="flex-shrink-0 px-4 py-2 rounded-xl bg-emerald-600 text-white text-sm font-extrabold active:bg-emerald-700">Save</button>' +
+        '</div>';
+    }
+    if (ui.savedMealNotice) {
+      html += '<div class="mt-2 text-[11px] font-semibold text-emerald-400 text-center">&#10003; Saved &ldquo;' + esc(ui.savedMealNotice) + '&rdquo; &mdash; find it in the Meals tab.</div>';
+    }
+    return html;
+  }
+
+  function mealsListHTML() {
+    const meals = filterMeals(ui.mealsSearch);
+    if (!meals.length) return '<div class="text-center py-3 text-sm text-zinc-500">No meals match &ldquo;' + esc(ui.mealsSearch) + '&rdquo;</div>';
+    return meals.map(m => {
+      const t = mealTotals(m);
+      return (
+        '<div class="rounded-xl bg-panel2 border border-edge p-2.5 mb-2 flex items-center gap-2">' +
+          '<div class="flex-1 min-w-0">' +
+            '<div class="font-bold text-sm truncate">' + esc(m.name) + '</div>' +
+            '<div class="text-[11px] text-zinc-500">' + m.items.length + ' item' + (m.items.length === 1 ? '' : 's') +
+              ' &middot; ' + fmtKcal(t.kcal) + ' kcal &middot; P ' + fmt(t.p) + ' &middot; C ' + fmt(t.c) + ' &middot; F ' + fmt(t.f) + '</div>' +
+          '</div>' +
+          '<div class="relative w-16 flex-shrink-0">' +
+            '<input type="number" inputmode="decimal" step="0.5" min="0" value="1" data-id="' + m.id + '" ' +
+              'class="meal-scale w-full bg-panel border border-edge rounded-lg pl-2 pr-6 py-1.5 text-sm font-bold text-zinc-100 focus:outline-none focus:ring-2 focus:ring-ember/60" />' +
+            '<span class="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-semibold text-zinc-500 pointer-events-none">&times;</span>' +
+          '</div>' +
+          '<button data-id="' + m.id + '" class="meal-log flex-shrink-0 px-3 py-1.5 rounded-lg bg-ember text-white text-sm font-extrabold active:bg-red-600">Log</button>' +
+          '<button data-id="' + m.id + '" class="meal-del w-8 h-8 flex-shrink-0 rounded-lg bg-panel border border-emberDim/50 text-ember/90 text-base leading-none" aria-label="Delete meal">&times;</button>' +
+        '</div>'
+      );
+    }).join('');
+  }
+
+  function mealsModeHTML() {
+    if (!store.meals.length) {
+      return '<div class="text-center py-4 text-sm text-zinc-500">No saved meals yet.<br/>Describe a meal, then tap &ldquo;Save as meal&rdquo;.</div>';
+    }
+    let html = '';
+    if (store.meals.length > 5) {
+      html += '<input type="text" id="mealsSearchInput" placeholder="Search meals..." value="' + esc(ui.mealsSearch) + '" ' +
+        'class="w-full bg-panel2 border border-edge rounded-xl px-3 py-2.5 text-sm font-semibold text-zinc-100 placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-ember/60 mb-2" />';
+    }
+    html += '<div id="mealsList">' + mealsListHTML() + '</div>';
+    return html;
+  }
+
   function wireAddPanel() {
     const openBtn = document.getElementById('addFoodBtn');
     if (openBtn) {
-      openBtn.addEventListener('click', () => { ui.addOpen = true; renderView(); });
+      openBtn.addEventListener('click', () => {
+        ui.addOpen = true;
+        ui.addMode = 'parse'; // always reopen on the Describe flow
+        renderView();
+      });
       return;
     }
     document.getElementById('closeAddBtn').addEventListener('click', () => {
       ui.addOpen = false; ui.selFoodId = null;
+      resetParseState();
       renderView();
     });
     viewContainer.querySelectorAll('.add-mode').forEach(btn => {
       btn.addEventListener('click', () => { ui.addMode = btn.dataset.mode; renderView(); });
     });
 
-    if (ui.addMode === 'library') {
-      const search = document.getElementById('libSearchInput');
-      search.addEventListener('input', (e) => {
-        ui.libSearch = e.target.value;
-        document.getElementById('libResults').innerHTML = libResultsHTML();
-        wireLibResults();
-      });
-      wireLibResults();
-      const addBtn = document.getElementById('libAddBtn');
-      if (addBtn) addBtn.addEventListener('click', () => {
-        const qty = num(document.getElementById('libQty').value);
-        if (qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
-        addEntryFromFood(store.meta.currentDate, ui.selFoodId, qty);
-        ui.addOpen = false; ui.selFoodId = null; ui.libSearch = '';
+    if (ui.addMode === 'parse') wireParseMode();
+    else if (ui.addMode === 'library') wireLibraryMode();
+    else if (ui.addMode === 'meals') wireMealsMode();
+    else wireQuickMode();
+  }
+
+  function doParse() {
+    const text = ui.parse.text.trim();
+    if (!text) { alert('Describe your meal first — e.g. "2 beef patties and one sweet potato".'); return; }
+    ui.parse.items = parseMealText(text);
+    ui.saveMealOpen = false;
+    ui.savedMealNotice = '';
+    renderView();
+  }
+
+  function wireParseMode() {
+    const ta = document.getElementById('parseText');
+    ta.addEventListener('input', (e) => { ui.parse.text = e.target.value; });
+    ta.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doParse(); }
+    });
+    document.getElementById('parseBtn').addEventListener('click', doParse);
+    if (ui.parse.items === null) return;
+    const items = ui.parse.items;
+
+    viewContainer.querySelectorAll('.pi-swap').forEach(sel => {
+      sel.addEventListener('change', (e) => {
+        const it = items[+e.target.dataset.i];
+        it.selIdx = parseInt(e.target.value, 10);
+        it.entry = buildEntry(it);
         renderView();
       });
-    } else {
-      document.getElementById('qaName').addEventListener('input', (e) => { ui.qa.name = e.target.value; });
-      viewContainer.querySelectorAll('.qa-macro').forEach(input => {
-        input.addEventListener('input', (e) => {
-          ui.qa[e.target.dataset.qa] = e.target.value;
-          if (!ui.qaKcalTouched) {
-            const k = Math.round(kcalFromMacros(num(ui.qa.p), num(ui.qa.c), num(ui.qa.f)) * 10) / 10;
-            ui.qa.kcal = k > 0 ? String(k) : '';
-            document.getElementById('qaKcal').value = ui.qa.kcal;
-          }
-        });
+    });
+    viewContainer.querySelectorAll('.pi-qty').forEach(input => {
+      input.addEventListener('input', (e) => {
+        const i = +e.target.dataset.i;
+        items[i].entry.qty = num(e.target.value);
+        const sub = viewContainer.querySelector('.pi-sub[data-i="' + i + '"]');
+        if (sub) sub.innerHTML = entrySubText(items[i].entry);
+        const tot = document.getElementById('parseTotals');
+        if (tot) tot.innerHTML = parseTotalsText();
+        flash(e.target);
       });
-      document.getElementById('qaKcal').addEventListener('input', (e) => {
-        ui.qa.kcal = e.target.value;
-        ui.qaKcalTouched = true;
+    });
+    viewContainer.querySelectorAll('.pi-del').forEach(btn => {
+      btn.addEventListener('click', () => { items.splice(+btn.dataset.i, 1); renderView(); });
+    });
+    viewContainer.querySelectorAll('.pi-quick').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const it = items[+btn.dataset.i];
+        ui.qa.name = it.query || it.raw;
+        ui.addMode = 'quick';
+        renderView();
       });
-      document.getElementById('qaAddBtn').addEventListener('click', () => {
-        const name = ui.qa.name.trim();
-        if (!name) { alert('Give the food a name.'); return; }
-        addQuickEntry(store.meta.currentDate, name, ui.qa.kcal, ui.qa.p, ui.qa.c, ui.qa.f);
-        ui.qa = { name: '', p: '', c: '', f: '', kcal: '' };
-        ui.qaKcalTouched = false;
+    });
+    viewContainer.querySelectorAll('.pi-save').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const it = items[+btn.dataset.i];
+        it.save = !it.save;
+        renderView();
+      });
+    });
+
+    const logBtn = document.getElementById('logMealBtn');
+    if (logBtn) logBtn.addEventListener('click', () => {
+      const matched = items.filter(it => it.entry);
+      if (!matched.length) { alert('Nothing matched yet — adjust the description or use Quick add.'); return; }
+      if (matched.some(it => num(it.entry.qty) <= 0)) { alert('Every item needs a quantity greater than 0.'); return; }
+      logParsedItems(store.meta.currentDate, items);
+      resetParseState();
+      ui.addOpen = false;
+      renderView();
+    });
+    const saveBtn = document.getElementById('saveMealBtn');
+    if (saveBtn) saveBtn.addEventListener('click', () => {
+      if (!items.some(it => it.entry && num(it.entry.qty) > 0)) { alert('Nothing matched to save yet.'); return; }
+      ui.saveMealOpen = true;
+      ui.savedMealNotice = '';
+      renderView();
+      const nameInput = document.getElementById('mealName');
+      if (nameInput) nameInput.focus();
+    });
+    const nameInput = document.getElementById('mealName');
+    if (nameInput) nameInput.addEventListener('input', (e) => { ui.saveMealName = e.target.value; });
+    const confirmBtn = document.getElementById('confirmSaveMeal');
+    if (confirmBtn) confirmBtn.addEventListener('click', () => {
+      const name = ui.saveMealName.trim();
+      if (!name) { alert('Give the meal a name.'); return; }
+      if (addMealFromItems(name, items)) {
+        ui.saveMealOpen = false;
+        ui.saveMealName = '';
+        ui.savedMealNotice = name;
+        renderView();
+      }
+    });
+  }
+
+  function wireMealsList() {
+    viewContainer.querySelectorAll('.meal-log').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const id = +btn.dataset.id;
+        const scaleInput = viewContainer.querySelector('.meal-scale[data-id="' + id + '"]');
+        const scale = scaleInput ? num(scaleInput.value) : 1;
+        if (scale <= 0) { alert('Scale must be greater than 0.'); return; }
+        logMeal(store.meta.currentDate, id, scale);
         ui.addOpen = false;
         renderView();
       });
-    }
+    });
+    viewContainer.querySelectorAll('.meal-del').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const meal = getMeal(+btn.dataset.id);
+        if (meal && confirm('Delete meal "' + meal.name + '"?')) {
+          deleteMeal(meal.id);
+          renderView();
+        }
+      });
+    });
+  }
+
+  function wireMealsMode() {
+    const search = document.getElementById('mealsSearchInput');
+    if (search) search.addEventListener('input', (e) => {
+      ui.mealsSearch = e.target.value;
+      document.getElementById('mealsList').innerHTML = mealsListHTML();
+      wireMealsList();
+    });
+    wireMealsList();
+  }
+
+  function wireLibraryMode() {
+    const search = document.getElementById('libSearchInput');
+    search.addEventListener('input', (e) => {
+      ui.libSearch = e.target.value;
+      document.getElementById('libResults').innerHTML = libResultsHTML();
+      wireLibResults();
+    });
+    wireLibResults();
+    const addBtn = document.getElementById('libAddBtn');
+    if (addBtn) addBtn.addEventListener('click', () => {
+      const qty = num(document.getElementById('libQty').value);
+      if (qty <= 0) { alert('Enter a quantity greater than 0.'); return; }
+      addEntryFromFood(store.meta.currentDate, ui.selFoodId, qty);
+      ui.addOpen = false; ui.selFoodId = null; ui.libSearch = '';
+      renderView();
+    });
+  }
+
+  function wireQuickMode() {
+    document.getElementById('qaName').addEventListener('input', (e) => { ui.qa.name = e.target.value; });
+    viewContainer.querySelectorAll('.qa-macro').forEach(input => {
+      input.addEventListener('input', (e) => {
+        ui.qa[e.target.dataset.qa] = e.target.value;
+        if (!ui.qaKcalTouched) {
+          const k = Math.round(kcalFromMacros(num(ui.qa.p), num(ui.qa.c), num(ui.qa.f)) * 10) / 10;
+          ui.qa.kcal = k > 0 ? String(k) : '';
+          document.getElementById('qaKcal').value = ui.qa.kcal;
+        }
+      });
+    });
+    document.getElementById('qaKcal').addEventListener('input', (e) => {
+      ui.qa.kcal = e.target.value;
+      ui.qaKcalTouched = true;
+    });
+    document.getElementById('qaAddBtn').addEventListener('click', () => {
+      const name = ui.qa.name.trim();
+      if (!name) { alert('Give the food a name.'); return; }
+      addQuickEntry(store.meta.currentDate, name, ui.qa.kcal, ui.qa.p, ui.qa.c, ui.qa.f);
+      ui.qa = { name: '', p: '', c: '', f: '', kcal: '' };
+      ui.qaKcalTouched = false;
+      ui.addOpen = false;
+      renderView();
+    });
   }
 
   function renderLog() {
